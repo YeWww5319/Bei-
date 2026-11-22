@@ -1177,6 +1177,10 @@ struct KugouPlaylistDetail: View {
         //    否则云端已移除、本地列表却还显示，用户以为「取消收藏没生效」。
         .onReceive(NotificationCenter.default.publisher(for: .auroraFavoriteDidRemove)) { note in
             guard name == "默认收藏", let removedID = note.object as? String else { return }
+            // 🔴 2026-11-22(日)：排序缓存指纹 = count|first.id|last.id。取消的若不是首尾行，
+            //    指纹不变 → displaySongs 直接吃旧缓存 → 界面上这一行还在（用户实测
+            //    「取消收藏后外面列表还有红心/还在」）。显式失效，强制重排。
+            PlaylistSortMemo.shared.invalidate(sortListKey)
             withAnimation(.easeOut(duration: 0.2)) {
                 songs.removeAll { $0.id == removedID }
             }
@@ -1185,20 +1189,26 @@ struct KugouPlaylistDetail: View {
             //    withoutExcludedFavorites 在 load() 时过滤：取消后不显示，重新收藏清掉
             //    excluded 后缓存里仍有这行 → 自然恢复显示。
         }
-        // 🔴 2026-11-22(六)：取消收藏后再次收藏 → 把这首歌插回「默认收藏」列表 + 详情缓存，
-        //    否则缓存里没这一行，再进页面就不显示（用户实测反馈）。
+        // 🔴 2026-11-22(日)二轮修复：取消收藏后再次收藏，默认收藏列表要【即时】显示这首歌。
+        //    上一版只把通知里的 Song insert 到 songs[0]，但仍会失败，原因有两个：
+        //    ① PlaylistSortMemo 指纹碰撞 → displaySongs 吃旧缓存，插入的行看不见；
+        //    ② load() 的后台 enrich 快照晚到，`songs = snapped` 把刚插入的行覆盖掉。
+        //    正解：以 detailCache（取消时保留了该行）为权威源重建，强制补进刚收藏的歌，
+        //    再按当前 excluded 过滤；同时失效排序缓存、写回 detailCache（挡住晚到的快照）。
         .onReceive(NotificationCenter.default.publisher(for: .auroraFavoriteDidAdd)) { note in
             guard name == "默认收藏", let added = note.object as? Song else { return }
-            withAnimation(.easeOut(duration: 0.2)) {
-                if !songs.contains(where: { $0.id == added.id }) {
-                    songs.insert(added, at: 0)
-                }
-            }
-            var cached = Self.detailCache[listid] ?? []
-            if !cached.contains(where: { $0.id == added.id }) {
-                cached.insert(added, at: 0)
-                Self.detailCache[listid] = cached
-            }
+            let lib = LibraryStore.shared
+            var rebuilt = Self.detailCache[listid] ?? songs
+            // 播放页/搜索页传来的 Song 实例 id 可能与列表里的不同（本地/网络变体），
+            // 用 id 或「歌名+歌手」双判据避免重复插入。
+            let same: (Song) -> Bool = { $0.id == added.id ||
+                ($0.cleanTitle == added.cleanTitle && $0.artist == added.artist) }
+            if !rebuilt.contains(where: same) { rebuilt.insert(added, at: 0) }
+            // 清掉当前仍被排除的行（刚收藏的这首 excluded 已被 toggleFavorite 移除）。
+            rebuilt = rebuilt.filter { !lib.isExcludedFavorite($0) }
+            Self.detailCache[listid] = rebuilt
+            PlaylistSortMemo.shared.invalidate(sortListKey)
+            withAnimation(.easeOut(duration: 0.2)) { songs = rebuilt }
         }
         .sheet(isPresented: $showKugouPicker) {
             KugouPlaylistPicker(songs: songs, title: "加入我的酷狗歌单")

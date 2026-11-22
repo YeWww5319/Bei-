@@ -195,7 +195,7 @@ final class ArtistPagePresenter {
             return
         }
         let host = UIHostingController(rootView:
-            ArtistDetailView(artist: artist)
+            ArtistDetailView(artist: artist, onModalDismiss: { [weak self] in self?.dismiss() })
                 .environmentObject(PlayerStore.shared))
         let nav = UINavigationController(rootViewController: host)
         // 🔴 不能隐藏 nav bar —— ArtistDetailView 的返回按钮 / 更多按钮走 toolbar，
@@ -204,6 +204,15 @@ final class ArtistPagePresenter {
         nav.modalPresentationStyle = .fullScreen
         currentNav = nav
         top.present(nav, animated: true, completion: nil)
+    }
+
+    /// 🔴 2026-11-22(日)：歌手页由 UIKit `present()` 弹出，SwiftUI 的
+    ///    `@Environment(\.dismiss)` 在这里是 no-op（presenter 不是 SwiftUI 管的），
+    ///    所以返回按钮必须走这里直接 `dismiss(animated:)`，否则「返回按不到/按了没反应」。
+    func dismiss() {
+        guard let nav = currentNav else { return }
+        currentNav = nil
+        nav.dismiss(animated: true, completion: nil)
     }
 }
 
@@ -399,49 +408,53 @@ struct MiniPlayer: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            CoverImage(url: mini.song?.artworkURL,
-                       fallbackKeys: mini.song?.coverFallbackKeys ?? [],
-                       seed: "\(mini.song?.artist ?? "")-\(mini.song?.title ?? "")",
-                       size: 40,
-                       corner: 8)
+            // 🔴 2026-11-22(日)：把封面+文字区做成**显式 Button**，点这里必然进播放页。
+            //    原先整个 HStack 挂 .onTapGesture，但内部 Button（播放/下一首）+ DragGesture
+            //    会抢走点击，实测「点播放条进不去播放页」。显式 Button 的命中优先级最高。
+            Button { expand() } label: {
+                HStack(spacing: 10) {
+                    CoverImage(url: mini.song?.artworkURL,
+                               fallbackKeys: mini.song?.coverFallbackKeys ?? [],
+                               seed: "\(mini.song?.artist ?? "")-\(mini.song?.title ?? "")",
+                               size: 40,
+                               corner: 8)
 
-            VStack(alignment: .leading, spacing: 2) {
-                // 第一行：歌曲名；第二行：歌手名（排第一）+ 音质
-                // 🔴 2026-11-22(六)：歌名与歌手都改成与列表行同款跑马灯 —— 多位歌手
-                //    （"卓依婷、林正桦"）不再被截成「…」，超宽时自动横向滚动。
-                MarqueeText(text: mini.song?.title ?? "",
-                            size: 14,
-                            weight: .medium,
-                            color: AppStyle.primaryText)
-                HStack(spacing: 6) {
-                    MarqueeText(text: mini.song?.artist ?? "",
-                                size: 11,
-                                weight: .regular,
-                                color: AppStyle.secondaryText)
-                    // 标签固定尺寸、优先占位；跑马灯吃掉剩余宽度，长歌手名才滚动。
-                    // 🔴 用户要求：迷你条 VIP 标签文字改灰白、跟歌手名同色（secondaryText）。
-                    VIPTag(textColor: AppStyle.secondaryText)
-                        .layoutPriority(1).fixedSize()
-                    // 🔴 2026-11-22：迷你条也显示当前音源标签（跟歌手名同色）。
-                    if !mini.sourceName.isEmpty {
-                        SourceTag(title: mini.sourceName, textColor: AppStyle.secondaryText)
-                            .layoutPriority(1).fixedSize()
-                    }
-                    // 🔴 3.0.0：已下载的歌曲在歌手名后面补「本地」标签，与 VIP / 音质标签同色。
-                    if let song = mini.song,
-                       song.source == .local || downloads.item(for: song)?.isDone == true {
-                        LocalTag().layoutPriority(1).fixedSize()
-                    }
-                    // 🔴 2026-11-15：已下载 / 本地歌曲的 `qualityName` 本身就是「本地」
-                    //   （PlayerStore 里 outcome.label = "本地"），上面已经画了 LocalTag，
-                    //   再画 QualityTag 就会出现「本地 本地」两个标签。这里只保留一个。
-                    if !mini.qualityName.isEmpty && mini.qualityName != "本地" {
-                        // 🔴 用户要求：迷你条音质标签文字改灰白、跟歌手名同色（secondaryText）。
-                        QualityTag(title: mini.qualityName, tint: AppStyle.secondaryText)
-                            .layoutPriority(1).fixedSize()
+                    VStack(alignment: .leading, spacing: 2) {
+                        // 第一行：歌曲名跑马灯；第二行：歌手名 + 紧跟其后的标签。
+                        MarqueeText(text: mini.song?.title ?? "",
+                                    size: 14,
+                                    weight: .medium,
+                                    color: AppStyle.primaryText)
+                        HStack(spacing: 6) {
+                            // 🔴 2026-11-22(日)：标签要**紧跟歌手名**，不能被推到最右边。
+                            //    用普通 Text（按内容 hug）而不是 MarqueeText（.frame(maxWidth:.infinity)
+                            //    会吃满剩余宽度把标签顶走）。歌手名本身单行即可。
+                            Text(mini.song?.artist ?? "")
+                                .font(.system(size: 11))
+                                .foregroundStyle(AppStyle.secondaryText)
+                                .lineLimit(1)
+                            // 🔴 2026-11-22(日)：按用户要求移除迷你条 VIP 标签。
+                            // 🔴 2026-11-22：迷你条音源标签（跟歌手名同色）。
+                            if !mini.sourceName.isEmpty {
+                                SourceTag(title: mini.sourceName, textColor: AppStyle.secondaryText)
+                                    .fixedSize()
+                            }
+                            // 🔴 3.0.0：已下载的歌曲在歌手名后面补「本地」标签。
+                            if let song = mini.song,
+                               song.source == .local || downloads.item(for: song)?.isDone == true {
+                                LocalTag().fixedSize()
+                            }
+                            // 已下载 / 本地歌曲的 qualityName 本身就是「本地」，上面已画 LocalTag，
+                            // 再画 QualityTag 会出现「本地 本地」两个标签。这里只保留一个。
+                            if !mini.qualityName.isEmpty && mini.qualityName != "本地" {
+                                QualityTag(title: mini.qualityName, tint: AppStyle.secondaryText)
+                                    .fixedSize()
+                            }
+                        }
                     }
                 }
             }
+            .buttonStyle(.plain)
 
             Spacer(minLength: 0)
 

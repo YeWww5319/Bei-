@@ -1,0 +1,272 @@
+import SwiftUI
+import Dispatch
+
+// MARK: - 全屏歌词页大字歌词流（2026-11-22 周日：从 PlayerView.swift 迁出）
+//
+// 🔴 为什么单独成文件：PlayerView.swift 已贴近 Swift 类型检查预算，
+//    这里新增「上滑中心线放大 + 从这行播放」后体积更大，独立文件可避免
+//    "unable to type-check this expression in reasonable time"。
+//
+// 原行为（保留）：LazyVStack 只渲染可见行；currentIndex 高亮当前演唱行；
+//                 打开/切歌时把当前行滚到偏上 anchor(0.38)；点行跳播。
+// 新行为（2026-11-22 日）：用户手动上滑歌词时，进入「选行」态 —— 离视口中心最近的
+//                 那行放大加粗，旁边出现「从这行播放」按钮；点按钮从该行时间播放并
+//                 恢复自动跟随；停止操作 3 秒后自动恢复自动跟随。
+
+/// 每行在命名坐标空间里的 midY —— 用来找「离视口中心最近的行」。
+private struct LyricRowFrameKey: PreferenceKey {
+    static var defaultValue: [Int: CGFloat] = [:]
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// 选行态的持有者：class + ObservableObject，避免 struct 捕获 self 写 @State 的时序问题。
+/// 🔴 无锁：所有写入都在主线程（DragGesture / onPreferenceChange / timer 主线程回调）。
+private final class LyricPickState: ObservableObject {
+    @Published var isPicking = false
+    @Published var pickedIndex: Int? = nil
+    private var resumeWork: DispatchWorkItem?
+
+    func begin() {
+        // 🔴 DragGesture.onChanged 每帧都调，@Published 同值写入也会发 objectWillChange
+        //    → 每次重算整个歌词列表 → 滑动抖动。只在首次进入选行态时写一次。
+        if !isPicking { isPicking = true }
+        scheduleResume()
+    }
+
+    func noteScroll() { scheduleResume() }
+
+    func end() {
+        resumeWork?.cancel()
+        resumeWork = nil
+        isPicking = false
+        pickedIndex = nil
+    }
+
+    private func scheduleResume() {
+        resumeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.isPicking = false
+            self.pickedIndex = nil
+        }
+        resumeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
+    }
+
+    deinit { resumeWork?.cancel() }
+}
+
+struct BigLyricsView: View {
+    let lyrics: [LyricLine]
+    let currentIndex: Int?
+    var showsTranslation: Bool
+    /// 🔴 let 不订阅：逐字填充交给子视图 / 时间驱动，本体不随 4fps 进度重建。
+    let playback: PlaybackProgress
+    var isPlaying: Bool
+    /// 精确播放头（AVPlayer 实时值）。
+    var liveTime: (() -> Double)? = nil
+    /// 🔴 歌词字号（与「更多 → 歌词字号」共用同一个 AppStorage key）。
+    @AppStorage(LyricsFontScale.key) private var lyricsFontScale: Double = 1.0
+    /// 点击某行 → 从该行时间点开始播放。
+    var onSeek: ((Double) -> Void)? = nil
+
+    @StateObject private var pick = LyricPickState()
+    /// 视口高度（GeometryReader 实测）—— 中心线 = height / 2。
+    @State private var viewportHeight: CGFloat = 0
+    /// 点「从这行播放」/点行跳播时，已经自己滚到目标行了，别让「退出选行态」的
+    /// onChange 再滚回旧当前行（否则先跳回旧行、再随 seek 跳到新行，闪一下）。
+    @State private var suppressResumeScroll = false
+
+    private static let scrollSpace = "BigLyricsScroll"
+    /// 高亮行往上挪一行（与旧版一致）。
+    private static let activeAnchor = UnitPoint(x: 0.5, y: 0.38)
+
+    var body: some View {
+        GeometryReader { outer in
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(alignment: .center, spacing: 26) {
+                        if lyrics.isEmpty {
+                            Text("纯音乐 · 暂无歌词")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.white.opacity(0.45))
+                        } else {
+                            ForEach(Array(lyrics.enumerated()), id: \.element.id) { idx, line in
+                                lyricRow(idx: idx, line: line, proxy: proxy)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 120)
+                }
+                // 行 frame 相对这个命名空间 = 相对视口；滚动时 midY 会跟着变。
+                .coordinateSpace(name: Self.scrollSpace)
+                .mask(LinearGradient(colors: [.clear, .black.opacity(0.85), .black, .black.opacity(0.85), .clear],
+                                     startPoint: .top, endPoint: .bottom))
+                // 用户手动拖动 → 进入选行态（simultaneous 不抢 ScrollView 自身的滚动）。
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 3)
+                        .onChanged { _ in pick.begin() }
+                )
+                .onPreferenceChange(LyricRowFrameKey.self) { frames in
+                    updatePicked(from: frames, height: viewportHeight)
+                }
+                .onAppear {
+                    viewportHeight = outer.size.height
+                    scrollToActive(proxy, animated: false)
+                }
+                .onChange(of: outer.size.height) { viewportHeight = $0 }
+                .onChange(of: currentIndex) { _ in
+                    // 选行态里别自动回滚，否则用户一滑就被拉回当前行。
+                    guard !pick.isPicking else { return }
+                    scrollToActive(proxy, animated: true)
+                }
+                .onChange(of: lyrics) { _ in
+                    pick.end()
+                    scrollToActive(proxy, animated: false)
+                }
+                .onChange(of: pick.isPicking) { picking in
+                    // 选行态结束：把（新的）当前演唱行滚回偏上位置。
+                    if !picking {
+                        if suppressResumeScroll {
+                            suppressResumeScroll = false   // 已自己滚到目标行，跳过这次
+                        } else {
+                            scrollToActive(proxy, animated: true)
+                        }
+                    }
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: pick.pickedIndex)
+    }
+
+    // MARK: - 中心行检测
+
+    private func updatePicked(from frames: [Int: CGFloat], height: CGFloat) {
+        guard pick.isPicking, height > 0, !frames.isEmpty else { return }
+        let center = height / 2
+        var bestIdx: Int? = nil
+        var bestDist: CGFloat = .greatestFiniteMagnitude
+        for (idx, midY) in frames {
+            let d = abs(midY - center)
+            if d < bestDist { bestDist = d; bestIdx = idx }
+        }
+        // 容差半个行高左右，避免回弹/空白时乱选；行距 26 + 行高约 40 → 相邻约 66pt。
+        if let idx = bestIdx, bestDist < max(48, height * 0.18) {
+            if pick.pickedIndex != idx { pick.pickedIndex = idx }
+        }
+    }
+
+    private func scrollToActive(_ proxy: ScrollViewProxy, animated: Bool) {
+        let id: UUID?
+        if let idx = currentIndex, lyrics.indices.contains(idx) {
+            id = lyrics[idx].id
+        } else {
+            id = lyrics.first?.id
+        }
+        guard let id else { return }
+        if animated {
+            withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(id, anchor: Self.activeAnchor) }
+        } else {
+            proxy.scrollTo(id, anchor: Self.activeAnchor)
+        }
+    }
+
+    private func playFromHere(_ line: LyricLine, proxy: ScrollViewProxy) {
+        // 🔴 先标记「自己会滚」再 end()，否则退出选行态的 onChange 会滚回旧当前行。
+        if pick.isPicking { suppressResumeScroll = true }
+        onSeek?(line.time)
+        Haptics.light()
+        pick.end()
+        // 从选行态跳播：立刻把目标行滚回偏上位置；currentIndex 随后更新的 onChange
+        // 也会补一次（选行态已结束，guard 放行），重复滚动无副作用。
+        if let idx = lyrics.firstIndex(where: { $0.id == line.id }) {
+            let target = lyrics[idx].id
+            withAnimation(.easeInOut(duration: 0.35)) {
+                proxy.scrollTo(target, anchor: Self.activeAnchor)
+            }
+        }
+    }
+
+    // MARK: - 单行
+
+    private func lyricRow(idx: Int, line: LyricLine, proxy: ScrollViewProxy) -> some View {
+        let activeIdx = currentIndex
+        let isActive = activeIdx == idx
+        let isNear = activeIdx != nil && abs(idx - activeIdx!) <= 1
+        let isPicked = pick.isPicking && pick.pickedIndex == idx
+        let scale = CGFloat(max(0.6, min(1.6, lyricsFontScale)))
+
+        return VStack(spacing: 4) {
+            Text(line.text)
+                .font(.system(size: textSize(isActive: isActive, isPicked: isPicked) * scale,
+                              weight: isActive || isPicked ? .bold : .medium))
+                .foregroundStyle(textColor(isActive: isActive, isPicked: isPicked, isNear: isNear))
+                .multilineTextAlignment(.center)
+
+            // 🔴 2026-11-22(日)：中心线放大后，旁边出现「从这行播放」按钮。
+            if isPicked {
+                playFromButton(line: line, proxy: proxy)
+                    .padding(.top, 6)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+
+            if showsTranslation, let translation = line.translation, !translation.isEmpty {
+                Text(translation)
+                    .font(.system(size: (isActive || isPicked ? LyricsFontScale.translationActiveBase
+                                                : LyricsFontScale.translationInactiveBase) * scale))
+                    .foregroundStyle((isActive || isPicked) ? .white.opacity(0.78) : .white.opacity(0.3))
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .lineSpacing(2)
+        .frame(maxWidth: .infinity, alignment: .center)
+        // 把本行 midY 报给外层，用于找中心线。
+        .background(
+            GeometryReader { g in
+                Color.clear.preference(
+                    key: LyricRowFrameKey.self,
+                    value: [idx: g.frame(in: .named(Self.scrollSpace)).midY]
+                )
+            }
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard let seek = onSeek else { return }
+            if pick.isPicking { suppressResumeScroll = true }
+            seek(line.time)
+            pick.end()
+            Haptics.light()
+        }
+        .id(line.id)
+    }
+
+    private func playFromButton(line: LyricLine, proxy: ScrollViewProxy) -> some View {
+        Button { playFromHere(line, proxy: proxy) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 10))
+                Text("从这行播放")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(AppStyle.accent.opacity(0.92)))
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func textSize(isActive: Bool, isPicked: Bool) -> CGFloat {
+        if isPicked { return LyricsFontScale.activeBase + 5 }   // 中心行再放大一档
+        if isActive { return LyricsFontScale.activeBase }
+        return LyricsFontScale.inactiveBase
+    }
+
+    private func textColor(isActive: Bool, isPicked: Bool, isNear: Bool) -> Color {
+        if isPicked || isActive { return .white }
+        if pick.isPicking { return .white.opacity(0.2) }        // 选行态其它行更暗，突出中心行
+        return .white.opacity(isNear ? 0.45 : 0.28)
+    }
+}

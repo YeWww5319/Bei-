@@ -428,13 +428,13 @@ struct PlayerView: View {
 
     /// 🔴 2026-11-22(六)：点歌手名进入歌手主页，与搜索/发现页同款 ArtistDetailView。
     ///    多歌手（"A、B" / "A&B" / "A / B"）时取第一个，避免拼出来的 id 搜不到。
+    /// 🔴 2026-11-22(日)：不再把歌曲封面当歌手大图 —— coverURL 传 nil，
+    ///    ArtistDetailView 进场后自行按歌手名拉写真（见其 heroPhotoURL）。
     private func openArtistPage() {
         guard let song = store.current else { return }
         let name = Self.firstArtistName(song.artist)
         guard !name.isEmpty else { return }
-        let artist = Artist(id: "kw:\(name)",
-                            name: name,
-                            coverURL: song.artworkURL)
+        let artist = Artist(id: "kw:\(name)", name: name, coverURL: nil)
         ArtistPagePresenter.shared.present(artist: artist)
         Haptics.light()
     }
@@ -2438,131 +2438,6 @@ private struct LyricsBottomBar: View {
     private var modeActive: Bool { store.mode != .order }
 }
 
-/// 全屏歌词页专用大字歌词流。当前行 30pt 纯白垂直居中，其他行 20pt 浅灰，行间距拉大到 40pt。
-/// 性能关键：LazyVStack（只渲染可见行）+ index 直接比较（干掉 O(n²) firstIndex）+ 每行无 .animation（全局动画容器）。
-private struct BigLyricsView: View {
-    let lyrics: [LyricLine]
-    let currentIndex: Int?
-    var showsTranslation: Bool
-    /// 🔴 let 不订阅（v2.5.38）：BigLyricsView 的逐字填充交给子 KaraokeLine 的
-    /// TimelineView + liveTime 驱动，本体无需随 4fps 进度重建（避免整页歌词 4Hz 抖动）。
-    let playback: PlaybackProgress
-    var isPlaying: Bool
-    /// 精确播放头（AVPlayer 实时值）：逐帧直读，根治「逐字跟不上」。
-    var liveTime: (() -> Double)? = nil
-    /// 🔴 2026-11-16：歌词字号（与「更多 → 歌词字号」共用同一个 AppStorage key）。
-    ///    放在最后且带默认值，不改变既有成员初始化器的参数顺序。
-    @AppStorage(LyricsFontScale.key) private var lyricsFontScale: Double = 1.0
-    /// 🔴 2026-11-22(六)：点击某行歌词 → 从该行时间点开始播放。默认 nil（不响应点击）。
-    var onSeek: ((Double) -> Void)? = nil
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(showsIndicators: false) {
-                // LazyVStack：只渲染屏幕可见的几行 —— 100 行歌词 ≈ 同时渲染 8-10 行，
-                // 对比 VStack 全量渲染 100 行，滚动时 body 重建量直接砍到 1/10。
-                // 🔴 v2.7.0：行间距 40 → 26（用户要求上下间距改小，一屏能多看几行）
-                LazyVStack(alignment: .center, spacing: 26) {
-                    if lyrics.isEmpty {
-                        Text("纯音乐 · 暂无歌词")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.white.opacity(0.45))
-                    } else {
-                        // enumerated() 让每行持有自己的 index —— isActive/isNearActive 直接比较 index，
-                        // 干掉原来的 firstIndex(where:) O(n) 扫描。ForEach × firstIndex = O(n²)。
-                        ForEach(Array(lyrics.enumerated()), id: \.element.id) { idx, line in
-                            lyricRow(idx: idx, line: line)
-                        }
-                    }
-                }
-                .padding(.vertical, 120)
-            }
-            .mask(LinearGradient(colors: [.clear, .black.opacity(0.85), .black, .black.opacity(0.85), .clear],
-                                startPoint: .top,
-                                endPoint: .bottom))
-            .onAppear {
-                // 🔴 打开歌词页时若正在播放，立即把当前演唱行滚到【偏上位置】：
-                // 不能只靠 onChange(currentIndex) —— 打开瞬间 currentIndex 已是当前值（没变化），
-                // onChange 不会触发，于是停在顶端。这里显式滚一次，配合下方 onChange 保持位置。
-                if let id = activeId {
-                    proxy.scrollTo(id, anchor: Self.activeAnchor)
-                } else {
-                    proxy.scrollTo(lyrics.first?.id, anchor: Self.activeAnchor)
-                }
-            }
-            .onChange(of: currentIndex) { _ in
-                guard let id = activeId else { return }
-                withAnimation(.easeInOut(duration: 0.5)) {
-                    proxy.scrollTo(id, anchor: Self.activeAnchor)
-                }
-            }
-            .onChange(of: lyrics) { _ in
-                // 切歌：滚到当前行（而非顶端），保持高亮行在偏上位置
-                if let id = activeId { proxy.scrollTo(id, anchor: Self.activeAnchor) }
-                else { proxy.scrollTo(lyrics.first?.id, anchor: Self.activeAnchor) }
-            }
-        }
-        // 容器级统一动画 —— 只有一个 animation 作用在 LazyVStack 上，
-        // 可见行的 active 状态样式变化会自动过渡，不可见行不渲染就不参与。
-        .animation(.easeInOut(duration: 0.3), value: currentIndex)
-    }
-
-    private var activeId: UUID? {
-        guard let index = currentIndex, lyrics.indices.contains(index) else { return nil }
-        return lyrics[index].id
-    }
-
-    /// 🔴 v2.6.7：高亮行往上挪一行 —— 之前 anchor 是 .center（屏幕正中），
-    /// 现在用 y=0.38 让当前句落在偏上位置（≈ 上移一行歌词的高度），
-    /// 和酷狗/网易云的歌词页习惯一致，底部控制条上方也能多露出几行歌词。
-    private static let activeAnchor = UnitPoint(x: 0.5, y: 0.38)
-
-    /// 单行歌词视图（抽出独立函数，降低 body 的类型推导复杂度，
-    /// 避免 "compiler is unable to type-check this expression in reasonable time"）。
-    private func lyricRow(idx: Int, line: LyricLine) -> some View {
-        let activeIdx = currentIndex
-        let isActive = activeIdx == idx
-        let isNear = activeIdx != nil && abs(idx - activeIdx!) <= 1
-        // 🔴 2026-11-16：基准字号仍是 v2.7.0 的 22 / 15，乘上用户在
-        //    「更多 → 歌词字号」里选的缩放系数；翻译行同步缩放，避免主行变大后
-        //    译文比例失调。系数夹在 0.6~1.6，防止旧数据里出现离谱数值。
-        let scale = CGFloat(max(0.6, min(1.6, lyricsFontScale)))
-        // 🔴 v2.7.0：行内间距 7→4，行距 4→2
-        return VStack(spacing: 4) {
-            if isActive {
-                // 🔴 v2.5.46：竖屏歌词页整行高亮（白、加粗），不再逐字卡拉OK填充
-                // （横屏歌词块保持逐字不变 —— 用户要求只改竖屏）
-                Text(line.text)
-                    .font(.system(size: LyricsFontScale.activeBase * scale, weight: .bold))
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-            } else {
-                Text(line.text)
-                    .font(.system(size: LyricsFontScale.inactiveBase * scale, weight: .medium))
-                    .foregroundStyle(.white.opacity(isNear ? 0.45 : 0.28))
-                    .multilineTextAlignment(.center)
-            }
-            if showsTranslation, let translation = line.translation, !translation.isEmpty {
-                Text(translation)
-                    .font(.system(size: (isActive ? LyricsFontScale.translationActiveBase
-                                                : LyricsFontScale.translationInactiveBase) * scale))
-                    .foregroundStyle(isActive ? .white.opacity(0.78) : .white.opacity(0.3))
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .lineSpacing(2)
-        .frame(maxWidth: .infinity, alignment: .center)
-        // 🔴 2026-11-22(六)：点这一行 → 从该行时间开始播放（歌词页点行跳转）。
-        //    contentShape 扩大命中区到整行宽度，行间空白不属于本行。
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard let seek = onSeek else { return }
-            seek(line.time)
-            Haptics.light()
-        }
-        .id(line.id)
-    }
-}
 
 // MARK: - 高频状态隔离子视图（v2.5.35）
 //
@@ -3968,9 +3843,8 @@ struct KugouLyricsPage: View {
         guard let song = store.current else { return }
         let name = PlayerView.firstArtistName(song.artist)
         guard !name.isEmpty else { return }
-        let artist = Artist(id: "kw:\(name)",
-                            name: name,
-                            coverURL: song.artworkURL)
+        // 🔴 2026-11-22(日)：大图用歌手写真，不传歌曲封面（ArtistDetailView 自行按名字拉写真）。
+        let artist = Artist(id: "kw:\(name)", name: name, coverURL: nil)
         ArtistPagePresenter.shared.present(artist: artist)
         Haptics.light()
     }

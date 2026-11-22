@@ -5,6 +5,10 @@ import UIKit
 /// 「单曲 / 专辑」+ 全部播放行（最新/最热排序）+ 扁平化编号歌曲列表 + 多选下载。
 struct ArtistDetailView: View {
     let artist: Artist
+    /// 🔴 2026-11-22(日)：从播放页歌手名进入时由 ArtistPagePresenter 用 UIKit present 弹出，
+    ///    SwiftUI 的 dismiss() 对该模态无效 → 注入闭包直接调 presenter.dismiss()。
+    ///    从发现/搜索页 NavigationLink push 进来时为 nil，仍走 SwiftUI dismiss()（pop）。
+    var onModalDismiss: (() -> Void)? = nil
     @EnvironmentObject private var store: PlayerStore
     @Environment(\.dismiss) private var dismiss
     @State private var songs: [Song] = []
@@ -17,6 +21,11 @@ struct ArtistDetailView: View {
     @State private var artistIntro: String = ""
     @State private var introExpanded = false
     @State private var showIntroSheet = false
+
+    /// 🔴 2026-11-22(日)：大图写真 URL。
+    ///    从播放页歌手名进来时 artist.coverURL 为 nil（不能再拿歌曲封面当歌手图），
+    ///    进场后按歌手名拉真实写真；发现/搜索页 push 进来时已有 coverURL，直接用它，不重复拉。
+    @State private var heroPhotoURL: URL? = nil
 
     // 顶部 Tab：歌曲 / 专辑
     @State private var tab: Int = 0
@@ -59,7 +68,8 @@ struct ArtistDetailView: View {
     ///    被 40pt 圆头像写入的 120px 缩略图污染，就是反复反馈的「模糊」。
     ///    现在升到 1200px，大图另开 `hiRes:true` 跳过共享缓存。
     private var hiResCoverURL: URL? {
-        guard let raw = artist.coverURL?.absoluteString else { return nil }
+        // 🔴 2026-11-22(日)：优先用进场后按歌手名拉到的写真；没有才退回传入的 coverURL。
+        guard let raw = (heroPhotoURL ?? artist.coverURL)?.absoluteString else { return nil }
         var s = raw
         for sz in ["90", "100", "120", "150", "165", "200", "240"] {
             s = s.replacingOccurrences(of: "softhead/\(sz)/", with: "softhead/400/")
@@ -71,6 +81,16 @@ struct ArtistDetailView: View {
         //    这里再升一档到 1200 —— 真机全屏大图的清晰度基准。
         s = s.replacingOccurrences(of: "softhead/400/", with: "softhead/1200/")
         return URL(string: s)
+    }
+
+    /// 🔴 2026-11-22(日)：返回按钮统一出口 —— 模态 present（播放页进歌手页）走
+    ///    ArtistPagePresenter 的 UIKit dismiss；push（发现/搜索页）走 SwiftUI dismiss()。
+    private func dismissArtistPage() {
+        if let onModalDismiss {
+            onModalDismiss()
+        } else {
+            dismiss()
+        }
     }
 
     var body: some View {
@@ -122,6 +142,9 @@ struct ArtistDetailView: View {
             ArtistHeroLayer(scrolled: headerScroll,
                             headerHeight: headerBaseHeight,
                             hideThreshold: headerBaseHeight - topInset,
+                            // 🔴 2026-11-22(日)：写真 URL 异步回填后要靠 key 变化触发 UIKit 浮层
+                            //    重建 hosted 大图（否则 makeUIView 捕获的初始 hero 永远不更新）。
+                            heroKey: hiResCoverURL?.absoluteString ?? "",
                             hero: AnyView(heroImageContent))
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
@@ -216,7 +239,7 @@ struct ArtistDetailView: View {
                     }
                 } else {
                     // 🔴 自绘返回：颜色与右侧三点一致（展开白 / 收起黑），替代系统蓝色返回按钮。
-                    Button { dismiss() } label: {
+                    Button { dismissArtistPage() } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 17, weight: .semibold))
@@ -238,6 +261,14 @@ struct ArtistDetailView: View {
         // 🔴 简介是可选增强：用非结构化 Task 并行发起（只发起不等待），
         //    既不拖住歌曲加载，也不会因 .task 随视图消失被取消而拿不到结果。
         .task {
+            // 🔴 2026-11-22(日)：没带封面进来（播放页歌手名入口）→ 按歌手名拉写真当大图。
+            //    用非结构化 Task：present 全屏时 .task 随视图消失被取消也不影响写真回填。
+            if heroPhotoURL == nil, artist.coverURL == nil {
+                Task { @MainActor in
+                    let photo = await KugouClient.shared.artistPhoto(name: artist.name, title: "")
+                    if let photo { heroPhotoURL = photo }
+                }
+            }
             Task {
                 let intro = await KugouClient.shared.artistIntro(name: artist.name, artistID: artist.id)
                 guard !intro.isEmpty else { return }
@@ -465,7 +496,8 @@ struct ArtistDetailView: View {
                     CoverImage(
                         // 🔴 圆头像只要 40pt，用列表原始 200px 图就够，
                         //    也不再污染 hiResCoverURL 的共享缓存条目。
-                        url: artist.coverURL,
+                        // 🔴 2026-11-22(日)：播放页入口没带 coverURL，用异步拉到的写真兜底。
+                        url: heroPhotoURL ?? artist.coverURL,
                         fallbackKeys: [artist.id],
                         seed: artist.name,
                         size: 40,
@@ -1006,6 +1038,8 @@ private struct ArtistIntroSheet: View {
             .kugouNavigationBarBackground()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
+                    // 关的是简介 sheet 自身（ArtistIntroSheet 有自己的 @Environment(\.dismiss)），
+                    // 不是关整个歌手页 —— 这里必须用它自己的 dismiss，不能调 ArtistDetailView 的方法。
                     Button("关闭") { dismiss() }
                 }
             }
@@ -1036,25 +1070,25 @@ private struct ArtistHeroLayer: UIViewRepresentable {
     let scrolled: CGFloat
     let headerHeight: CGFloat
     let hideThreshold: CGFloat
+    /// 🔴 2026-11-22(日)：写真 URL 的指纹。变化时重建 UIKit 浮层里的 hosted 大图，
+    ///    解决「从播放页进歌手页，大图一开始是列表歌曲封面、写真到了却不换」的问题。
+    let heroKey: String
     let hero: AnyView
 
     func makeUIView(context: Context) -> AnchorView {
         let v = AnchorView()
         v.headerHeight = headerHeight
         v.hideThreshold = hideThreshold
-        v.buildHero = { [hero] in
-            let host = UIHostingController(rootView: hero)
-            let view = host.view!
-            view.backgroundColor = .clear
-            view.isUserInteractionEnabled = false
-            view.clipsToBounds = true
-            return (view, host)
-        }
+        v.heroKey = heroKey
+        v.hero = hero
         return v
     }
 
     func updateUIView(_ uiView: AnchorView, context: Context) {
         uiView.scrolled = scrolled
+        // 🔴 2026-11-22(日)：写真 URL 异步回填 → heroKey 变化 → 重建 hosted 大图。
+        //    只在浮层已安装且未拆除时替换 rootView，不碰 nav 层级 / 滚动状态。
+        uiView.updateHero(key: heroKey, hero: hero)
         uiView.applyFrame()
     }
 
@@ -1072,10 +1106,46 @@ private struct ArtistHeroLayer: UIViewRepresentable {
         var scrolled: CGFloat = 0
         var headerHeight: CGFloat = 350
         var hideThreshold: CGFloat = 262
-        var buildHero: (() -> (UIView, UIHostingController<AnyView>))?
+        var heroKey: String = ""
+        var hero: AnyView?
 
         private var heroView: UIView?
         private var hosting: UIHostingController<AnyView>?
+
+        /// 用当前 `hero` 构建一个 hosted 大图视图（makeUIView 与写真回填都走这里）。
+        private func makeHost() -> (UIView, UIHostingController<AnyView>) {
+            let host = UIHostingController(rootView: hero ?? AnyView(EmptyView()))
+            let view = host.view!
+            view.backgroundColor = .clear
+            view.isUserInteractionEnabled = false
+            view.clipsToBounds = true
+            return (view, host)
+        }
+
+        /// 🔴 2026-11-22(日)：写真 URL 异步回填后重建 hosted 大图。
+        ///    只在已安装（heroView/hosting 都在）、且 key 真的变了、且未拆除时替换；
+        ///    新 rootView 用刚存下来的最新 hero，避免首帧捕获到歌曲封面。
+        func updateHero(key: String, hero: AnyView) {
+            guard key != heroKey else { return }
+            heroKey = key
+            self.hero = hero
+            guard !tornDown, let oldView = heroView, hosting != nil,
+                  let parent = container, let bar = navController?.navigationBar else {
+                // 还没安装：installIfNeeded 会用刚更新的 hero 首次构建。
+                return
+            }
+            let (newView, newHost) = makeHost()
+            newView.frame = oldView.frame
+            // 保持当前可见 / 转场状态，避免替换瞬间闪一下。
+            newView.isHidden = oldView.isHidden
+            newView.alpha = oldView.alpha
+            // 写真在进场（push）阶段异步回填，此刻大图恒在 bar 之下，原样还原层级即可。
+            oldView.removeFromSuperview()
+            parent.insertSubview(newView, belowSubview: bar)
+            hosting = newHost
+            heroView = newView
+            applyFrame()
+        }
         private weak var container: UIView?
         private weak var hostVC: UIViewController?
         /// 🔴 hostVC 是 weak，pop 后页面 VC 可能立刻被释放 → 变 nil。
@@ -1333,7 +1403,7 @@ private struct ArtistHeroLayer: UIViewRepresentable {
         }
 
         private func installIfNeeded() {
-            guard !tornDown, heroView == nil, let build = buildHero else { return }
+            guard !tornDown, heroView == nil, hero != nil else { return }
             // 🔴 绝不 fallback 到 rootView.addSubview —— 那会把大图盖在返回/收藏按钮上。
             //    首帧响应链可能还没连到导航控制器，稍后重试即可。
             guard let (bar, pageHost) = resolveNavContext(), let parent = bar.superview else {
@@ -1345,7 +1415,7 @@ private struct ArtistHeroLayer: UIViewRepresentable {
                 }
                 return
             }
-            let (view, host) = build()
+            let (view, host) = makeHost()
             hosting = host
             heroView = view
             container = parent
