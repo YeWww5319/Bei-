@@ -584,9 +584,8 @@ struct PlayerView: View {
                 )
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
-                // 🔴 v2.9.30：心形已放大撑满画布（顶到 y≈2.5、底到 y≈21.5），
-                // 与下载框（顶 y≈0.7）顶部基本齐平，仅需轻微上移 2pt 让视觉顶部对齐。
-                .offset(y: -2)
+                // 🔴 2026-11-22(五)：去掉原 .offset(y:-2) —— 实测它让收藏红心比
+                //    下载/音效/音源高约 2pt，用户要求一排图标上下齐平。
             }
             .buttonStyle(.plain)
             Spacer(minLength: 0)
@@ -3907,9 +3906,10 @@ struct KugouLyricsPage: View {
                 tag("VIP")
                 // 🔴 2026-11-18（二改）：音质标签改回显示音质名称，不再显示实测码率。
                 tag(SourceStore.shared.quality.title)
-                // 🔴 2026-11-22(四)：歌词页也加音源标签（与播放页/迷你条一致，取前 4 字）。
+                // 🔴 2026-11-22(五)：歌词页音源标签改成与 VIP/音质/本地 一样的描边样式（无灰底）。
+                //    取前 4 字，与播放页/迷你条的音源标签字数一致。
                 if !store.sourceName.isEmpty {
-                    SourceTag(title: store.sourceName, textColor: .white.opacity(0.85))
+                    tag(String(store.sourceName.prefix(4)))
                 }
                 if let current = store.current,
                    current.source == .local || DownloadManager.shared.item(for: current)?.isDone == true {
@@ -3963,7 +3963,7 @@ struct KugouLyricsPage: View {
                                  size: 24)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
-                    .offset(y: -2)
+                // 🔴 2026-11-22(五)：去掉原 .offset(y:-2)，与下载/音效/音源上下齐平。
             }
             .buttonStyle(.plain)
 

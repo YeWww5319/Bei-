@@ -1117,23 +1117,46 @@ struct KugouPlaylistDetail: View {
         PlaylistSortMemo.shared.index(songs: displaySongs, mode: sortMode, listKey: sortListKey)
     }
 
-    /// 🔴 2026-11-22(三)：封面优先用【列表第一首歌】的专辑图（与发现页榜单同款），
-    ///    没有才退回歌单自己的封面。用户反馈「默认收藏」头图是书法封面、跟第一首歌对不上。
-    ///    歌曲异步加载/排序变化会改 heroKey 刷新浮层。
+    /// 🔴 2026-11-22(五)：封面优先用【列表第一首歌】的专辑图（与发现页榜单同款），
+    ///    没有才退回歌单自己的封面。用户反馈「默认收藏」头图一直是书法封面、跟第一首歌对不上。
+    ///    ⚠️ 2026-11-22(四) 只看 `first.artworkURL` 没生效：云歌单这首歌的 artworkURL 常为空，
+    ///    真实封面是 CoverImage 用 `coverFallbackKeys`（kg:hash / al:专辑id）联网 resolve 出来的，
+    ///    根本不写回 song.artworkURL。所以这里改为【同步查 CoverResolver 登记表】拿第一首封面，
+    ///    并把第一首的 fallbackKeys 传给头图 CoverImage 兜底（见下方 hero / heroFallbackKeys）。
+    private var firstSong: Song? { displaySongs.first }
+
     private var heroURL: URL? {
-        if let first = displaySongs.first?.artworkURL { return first }
+        if let first = firstSong {
+            if let art = first.artworkURL { return art }
+            // 列表行能显示封面 = CoverResolver 里已登记过这张图（key 为 kg:hash / al:id）
+            if let resolved = CoverResolver.shared.firstAvailable(first.coverFallbackKeys) { return resolved }
+            // ⚠️ 关键：还没登记时返回 nil，让头图 CoverImage 走 fallbackKeys 联网 resolve
+            //    第一首封面；如果这里直接返回歌单封面 URL，CoverImage 的「url 优先」
+            //    会跳过 resolve，导致头图永远是书法封面（用户实测问题根因）。
+            return nil
+        }
+        // 歌曲还没加载出来时，才先用歌单自带封面顶上。
         if let coverURL, let url = URL(string: coverURL) { return url }
-        return songs.first?.artworkURL
+        return nil
+    }
+
+    /// 头图兜底键：第一首歌的 hash/专辑 id 优先（能 resolve 出真实专辑图），歌单自己的 key 兜底。
+    private var heroFallbackKeys: [String] {
+        var keys = firstSong?.coverFallbackKeys ?? []
+        keys.append("kg-list:\(listid)")
+        return keys
     }
 
     var body: some View {
         ImmersiveSongListContainer(
             state: headerState,
-            heroKey: "\(heroURL?.absoluteString ?? "-")|\(name)|\(songs.count)",
+            // 🔴 加入第一首歌 id：歌曲异步加载完 / 封面登记完成后，第一首会变化 →
+            //    浮层 rootView 重建一次，CoverImage 才能用新的 fallbackKeys 去 resolve 真实封面。
+            heroKey: "\(heroURL?.absoluteString ?? "-")|\(name)|\(songs.count)|\(firstSong?.id ?? "-")",
             hero: {
                 ImmersiveCoverHero(
                     url: heroURL,
-                    fallbackKeys: ["kg-list:\(listid)"],
+                    fallbackKeys: heroFallbackKeys,
                     seed: name,
                     title: name,
                     subtitle: "酷狗歌单",
@@ -1502,7 +1525,9 @@ struct KugouPlaylistDetail: View {
     // MARK: 🔴 v2.8.3 详情缓存：退出再进不再重新加载
 
     /// listid → 已解析+补齐的歌曲。详情页退出再进直接秒显，不再转圈重拉。
-    private static var detailCache: [String: [Song]] = [:]
+    /// 🔴 2026-11-22(五)：从 private 提为文件内可见 —— 列表行封面（PlaylistFirstCover）
+    ///    需要复用它拿「已排序 + 已 enrich 的列表第一首」，保证列表封面 == 头图 == 列表第一行。
+    static var detailCache: [String: [Song]] = [:]
     private static var cacheTime: [String: Date] = [:]
     /// 缓存有效期：超过这个时间，下次进入时旧数据先显示、再在后台静默刷新
     private static let cacheTTL: TimeInterval = 300
@@ -1761,57 +1786,87 @@ extension Notification.Name {
     static let auroraFavoriteDidRemove = Notification.Name("aurora.favoriteDidRemove")
 }
 
-/// 🔴 2026-11-22(四)：歌单列表行封面 —— 优先显示「歌单第一首歌的专辑图」。
+/// 🔴 2026-11-22(五)：歌单列表行封面 —— 优先显示「歌单第一首歌的专辑图」。
 ///
 /// 列表本身只有歌单元数据（songs 为空），第一首封面要按需请求。设计要点：
-///  · 静态缓存 `coverCache`：一个歌单只请求一次，滚动来回不重复发请求；
-///  · 懒加载在 `.task` 里做，成功后主线程写 @State，失败静默回退歌单自带封面 / seed 占位；
-///  · 用 firstPageOnly 只拉第一页（10 首），拿第一首的 artworkURL，不拉全量。
+///  · 静态缓存 `infoCache`：一个歌单只请求一次，滚动来回不重复发请求；
+///  · 懒加载在 `.task` 里做，请求第一首歌后拿它的 `coverFallbackKeys`（kg:hash / al:专辑id），
+///    交给 CoverImage 联网 resolve 真实专辑图 —— ⚠️ 云歌单第一首的 artworkURL 常为空，
+///    这正是 2026-11-22(四) 只看 artworkURL 没生效的根因。
+///  · 失败 / 空歌单回退歌单自带封面 + seed 占位。
 private struct PlaylistFirstCover: View {
     let playlist: KugouClient.KugouPlaylist
 
-    /// listid → 第一首歌封面 URL（只存成功拿到的）。`checked` 记录已查过的歌单（含查了没封面的），
-    /// 二者配合保证一个歌单只发一次请求、滚动来回不重复。
-    private static var coverCache: [String: URL] = [:]
+    /// 第一首歌的封面信息。`keys` 交给 CoverImage resolve，`art` 是同步已登记的直连地址，
+    /// `songID` 记录是哪首歌（用于判断第一首是否变化，避免误判 art 而反复重解析）。
+    private struct CoverInfo {
+        var songID: String = ""
+        var keys: [String] = []
+        var art: URL?
+    }
+    private static var infoCache: [String: CoverInfo] = [:]
     private static var checked: Set<String> = []
     private static let lock = NSLock()
 
-    @State private var firstArtwork: URL?
+    @State private var info = CoverInfo()
     @State private var loaded = false
 
     private var resolvedURL: URL? {
-        if loaded { return firstArtwork ?? fallbackURL }
-        if let cached = Self.cached(playlist.id) { return cached }
+        if loaded { return info.art ?? fallbackURL }
+        if let cached = Self.cached(playlist.id), let art = cached.art { return art }
         return fallbackURL
     }
     private var fallbackURL: URL? { playlist.coverURL.flatMap { URL(string: $0) } }
 
+    private var effectiveFallbackKeys: [String] {
+        var keys = loaded ? info.keys : (Self.cached(playlist.id)?.keys ?? [])
+        keys.append("kg-list:\(playlist.id)")
+        return keys
+    }
+
     var body: some View {
         CoverImage(url: resolvedURL,
-                   fallbackKeys: ["kg-list:\(playlist.id)"],
+                   fallbackKeys: effectiveFallbackKeys,
                    seed: playlist.name, size: 54, corner: 8)
             .task(id: playlist.id) {
-                if Self.cached(playlist.id) != nil || Self.isChecked(playlist.id) {
-                    let cached = Self.cached(playlist.id)
-                    await MainActor.run { firstArtwork = cached; loaded = true }
+                // 🔴 优先复用详情页缓存：它存的是「已排序 + 已 enrich」的歌曲，
+                //    first 正是列表第一行那首（服务端顺序 ≠ 列表倒序，直接用 playlistSongs().first 会选错歌）。
+                //    实时读取（不只看 checked）：用户点进详情页返回后 detailCache 已填充，
+                //    列表行重建 .task 重跑时能拿到最新第一首，封面随即刷新为正确那张。
+                let cachedFirst = KugouPlaylistDetail.detailCache[playlist.id]?.first
+                let existing = Self.cached(playlist.id)
+                let firstID = cachedFirst?.id ?? ""
+
+                // 已有信息且第一首没变（或来的还是同一首）→ 直接用缓存，不重复解析。
+                if let existing, Self.isChecked(playlist.id),
+                   (firstID.isEmpty || firstID == existing.songID) {
+                    await MainActor.run { info = existing; loaded = true }
                     return
                 }
-                // 先标记已查，避免同一歌单多行同时发请求。
+
+                // 确定第一首：详情缓存优先，否则按需请求服务端第一页。
+                let first: Song? = cachedFirst ?? (try? await KugouClient.shared
+                    .playlistSongs(listid: playlist.id, firstPageOnly: true).first)
                 Self.markChecked(playlist.id)
-                let cover = try? await KugouClient.shared
-                    .playlistSongs(listid: playlist.id, firstPageOnly: true)
-                    .first?.artworkURL
-                if let cover { Self.store(playlist.id, cover: cover) }
-                await MainActor.run {
-                    firstArtwork = cover
-                    loaded = true
+
+                var newInfo = CoverInfo()
+                newInfo.songID = first?.id ?? ""
+                if let first {
+                    newInfo.keys = first.coverFallbackKeys
+                    // ⚠️ 必须主动 resolve 出直连 URL 当首选：CoverImage 的 url 非 nil 时
+                    //    不会走 fallbackKeys 联网解析，传歌单封面 URL 会一直显示书法封面。
+                    newInfo.art = first.artworkURL
+                        ?? CoverResolver.shared.firstAvailable(first.coverFallbackKeys)
+                        ?? (await CoverResolver.shared.resolveCover(for: first.coverFallbackKeys))
                 }
+                Self.store(playlist.id, newInfo)
+                await MainActor.run { info = newInfo; loaded = true }
             }
     }
 
-    private static func cached(_ id: String) -> URL? {
+    private static func cached(_ id: String) -> CoverInfo? {
         lock.lock(); defer { lock.unlock() }
-        return coverCache[id]
+        return infoCache[id]
     }
     private static func isChecked(_ id: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
@@ -1821,8 +1876,8 @@ private struct PlaylistFirstCover: View {
         lock.lock(); defer { lock.unlock() }
         checked.insert(id)
     }
-    private static func store(_ id: String, cover: URL) {
+    private static func store(_ id: String, info: CoverInfo) {
         lock.lock(); defer { lock.unlock() }
-        coverCache[id] = cover
+        infoCache[id] = info
     }
 }
