@@ -780,7 +780,13 @@ struct CoverImage: View {
         }
         .frame(width: w, height: h)
         .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-        .task(id: taskKey) { await load() }
+        // 🔴 2026-11-22：换歌/换 URL（taskKey 变化）时先清空上一首的图，
+        //    避免新歌联网失败时 installFallbackIfNeeded() 因 image != nil 跳过
+        //    → 迷你条继续显示上一首封面。清空与加载绑在同一 task，顺序可靠。
+        .task(id: taskKey) {
+            image = nil
+            await load()
+        }
     }
 
     private var taskKey: String {
@@ -1519,11 +1525,13 @@ struct LocalTag: View {
 
 /// 🔴 2026-11-22：音源标签 —— 歌手名后面 / 迷你条里显示当前音源名。
 /// 与 LocalTag / QualityTag 同款灰白小胶囊；单独成视图，避免污染 PlayerView 类型检查。
+/// 🔴 2026-11-22（二）：只显示音源名前 4 个字（用户要求），过长不再整串展示。
 struct SourceTag: View {
     var title: String
     var textColor: Color = AppStyle.secondaryText
+    private var shortTitle: String { String(title.prefix(4)) }
     var body: some View {
-        Text(title)
+        Text(shortTitle)
             .font(.system(size: 9, weight: .medium))
             .foregroundStyle(textColor)
             .lineLimit(1)

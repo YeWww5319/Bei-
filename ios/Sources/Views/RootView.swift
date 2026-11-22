@@ -114,6 +114,51 @@ final class PlayerPresenter {
     }
 }
 
+/// 🔴 2026-11-22：酷狗扫码登录页的 UIKit 呈现器。
+///
+/// 为什么不用 SwiftUI `.sheet(isPresented:)`：登录入口遍布各 Tab 和播放页，
+/// 播放页是 UIKit 全屏 present 的，盖在 TabView 上 —— 挂在 TabView 上的 sheet
+/// 在播放页展开时弹不出来，且 Bool 状态卡在 true 后所有入口失效（用户反馈）。
+/// 这里直接 present 到当前最顶层 VC（可能是播放页），每次都是新的 present，
+/// 并用 currentVC 去重，避免重复点击叠出多个登录页。
+final class KugouLoginPresenter {
+    static let shared = KugouLoginPresenter()
+    private weak var currentVC: UIViewController?
+    private init() {}
+
+    private var mainWindow: UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { w in
+                let s = w.screen.bounds
+                return w.bounds.width > 0
+                    && abs(w.bounds.width - s.width) < 1
+                    && abs(w.bounds.height - s.height) < 1
+            }
+    }
+
+    func present() {
+        // 已经有一个登录页在显示（含正在被 present 的）→ 不重复弹
+        if let vc = currentVC, vc.presentingViewController != nil { return }
+        guard let root = mainWindow?.rootViewController else { return }
+        // 走到最顶层：播放页展开时 topmost 是 PlayerHostingController。
+        var top = root
+        while let presented = top.presentedViewController { top = presented }
+        // 若 top 本身已经在 present（转场中），延后一拍再试，避免 present 失败。
+        guard top.presentedViewController == nil else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.present()
+            }
+            return
+        }
+        let host = UIHostingController(rootView: KugouLoginSheet())
+        host.modalPresentationStyle = .pageSheet
+        currentVC = host
+        top.present(host, animated: true, completion: nil)
+    }
+}
+
 /// 🔴 v2.6.4：播放页容器 —— 横屏播放器时隐藏系统 home 指示条（底部那条白杠）。
 ///
 /// 为什么不用 `UIApplication.shared.isHomeIndicatorAutoHidden`：现代 iOS 由
@@ -147,7 +192,6 @@ private struct MainTabs: View {
     @Binding var isExpanded: Bool
 
     @State private var tab: Tab = .discover
-    @State private var showKugouLogin = false
 
     init(store: PlayerStore, isExpanded: Binding<Bool>) {
         self.store = store
@@ -174,9 +218,13 @@ private struct MainTabs: View {
         }
         // 键盘弹出时不抬 TabBar/播放条（搜索页打字时保持原位，与旧版行为一致）
         .ignoresSafeArea(.keyboard)
-        .sheet(isPresented: $showKugouLogin) { KugouLoginSheet() }
+        // 🔴 2026-11-22：登录页改用 UIKit 级 present 到最顶层 VC。
+        //    旧实现是挂在 TabView 上的 `.sheet(isPresented: $showKugouLogin)`：
+        //    播放页是 UIKit 全屏 present，盖在 TabView 之上 → 播放页里点收藏时
+        //    登录 sheet 弹不出来，且 showKugouLogin 卡在 true → 之后所有登录入口失效。
+        //    presenter 每次都真正 present 到当前 topmost（播放页或 TabView），不会卡死。
         .onReceive(NotificationCenter.default.publisher(for: .auroraShowKugouLogin)) { _ in
-            showKugouLogin = true
+            KugouLoginPresenter.shared.present()
         }
         .tint(AppStyle.tabBarSelected)
         // 🔴 头像兜底：已登录但本地没存头像的存量用户（二维码登录响应没给、

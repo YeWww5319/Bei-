@@ -158,6 +158,8 @@ struct SourcePickerSheet: View {
 
 /// 单个音源行：把拖动状态（dragOffset / isDragging）放在这里，
 /// 每帧拖动只重算这一行；父视图只在跨行时收到一次 `onDragMove`。
+/// 🔴 2026-11-22（三）：拖动手势只挂在左侧「把手」上，不再吞整行的触摸 ——
+///    否则滚动列表和点开关都被手势抢走（用户反馈「不能上滑、开关点不动」）。
 private struct SourcePickerRowView: View {
     let source: ThirdPartySource
     let index: Int
@@ -176,7 +178,9 @@ private struct SourcePickerRowView: View {
     @State private var reportedTarget = -1
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
+            // 🔴 拖拽把手：只有这一小块区域挂长按手势，不吞列表滚动 / 开关点击。
+            dragHandle
             healthDot
             VStack(alignment: .leading, spacing: 3) {
                 Text(source.isBundled ? "默认音源" : source.name)
@@ -198,7 +202,6 @@ private struct SourcePickerRowView: View {
         }
         .padding(.vertical, 4)
         .frame(height: rowHeight)
-        .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(isDragging ? AppStyle.accent.opacity(0.14) : Color.clear)
@@ -214,7 +217,20 @@ private struct SourcePickerRowView: View {
         .offset(y: isDragging ? dragOffset : 0)
         .scaleEffect(isDragging ? 1.02 : 1)
         .zIndex(isDragging ? 10 : 0)
-        // 🔴 手势只挂在这一行：长按 0.25s 进入拖动；位移每帧只更新本行 @State。
+    }
+
+    /// 左侧拖拽把手（三条横线），长按 0.25s 进入拖动。
+    /// 手势只作用在这 24pt 宽的区域，列表其余部分照常滚动 / 点开关。
+    private var dragHandle: some View {
+        VStack(spacing: 3) {
+            ForEach(0..<3) { _ in
+                Capsule()
+                    .fill(AppStyle.tertiaryText.opacity(0.55))
+                    .frame(width: 14, height: 2)
+            }
+        }
+        .frame(width: 24, height: 40)
+        .contentShape(Rectangle())
         .gesture(
             LongPressGesture(minimumDuration: 0.25)
                 .sequenced(before: DragGesture(minimumDistance: 0))

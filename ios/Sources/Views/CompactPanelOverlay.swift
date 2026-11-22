@@ -19,8 +19,9 @@ struct CompactPanelOverlay<Content: View>: View {
     let onDismiss: () -> Void
     let content: Content
 
-    /// 顶部可下拉关闭的区域高度（覆盖横条 + 标题行）。列表区在此之下，不受手势影响。
-    private let topGrabHeight: CGFloat = 90
+    /// 顶部可下拉关闭的区域高度。🔴 2026-11-22（三）：收紧到只剩横条附近（约 40pt），
+    ///    不再覆盖标题行/列表头部，避免和音源列表滚动、开关点击抢手势。
+    private let topGrabHeight: CGFloat = 40
     /// 下拉超过该距离即关闭，否则回弹。
     private let dismissThreshold: CGFloat = 90
     /// 卡片实时下拉位移。

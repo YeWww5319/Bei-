@@ -96,8 +96,9 @@ enum Lucide: String, CaseIterable {
     case listMusic  // 更多菜单·加入播放列表（列表+音符）
     case slidersHorizontal  // 动作行·音效（三条横线 + 滑块，Lucide sliders-horizontal）
     case fileHeadphone  // 动作行·音源（文档折角 + 耳机，Lucide file-headphone）
-    case audioSourceBox  // 🔴 2026-11-22 动作行·音源（收件盒：圆角外框 + 顶部横条 + V 形收口）
-    case soundSparkleBox  // 🔴 2026-11-22 动作行·音效（开口方框 + 大小两个四角星，Lucide square-sparkles）
+    case audioSourceBox  // 2026-11-22 动作行·音源（收件盒：圆角外框 + 顶部横条 + V 形收口）
+    case soundSparkleBox  // 2026-11-22 动作行·音效（开口方框 + 大小两个四角星，Lucide square-sparkles）
+    case circuitBoard  // 🔴 2026-11-22 动作行·音源（电路板：圆角方框 + 走线 + 两个触点，Lucide circuit-board）
 
     /// 在给定 rect 内构造该图标的 Path（描边路径，未闭合填充由调用方决定）。
     func path(in rect: CGRect) -> Path {
@@ -1160,6 +1161,31 @@ enum Lucide: String, CaseIterable {
             p.addCurve(to: g.p(10.7, 8.0), control1: g.p(11.8, 8.8), control2: g.p(9.7, 8.4))
             p.addCurve(to: g.p(15.0, 6.9), control1: g.p(9.7, 7.6), control2: g.p(11.8, 7.2))
             p.addCurve(to: g.p(16.0, 2.6), control1: g.p(14.1, 6.4), control2: g.p(15.6, 5.0))
+
+        case .circuitBoard:  // 🔴 2026-11-22 音源 — circuit-board（圆角方框 + 走线 + 两个触点）
+            p.move(to: g.p(11.000, 9.000)); p.addLine(to: g.p(15.000, 9.000))
+            p.addLine(to: g.p(15.618, 8.902)); p.addLine(to: g.p(16.176, 8.618))
+            p.addLine(to: g.p(16.618, 8.176)); p.addLine(to: g.p(16.902, 7.618))
+            p.addLine(to: g.p(17.000, 7.000)); p.addLine(to: g.p(17.000, 3.000))
+            p.move(to: g.p(7.000, 21.000)); p.addLine(to: g.p(7.000, 17.000))
+            p.addLine(to: g.p(7.098, 16.382)); p.addLine(to: g.p(7.382, 15.824))
+            p.addLine(to: g.p(7.824, 15.382)); p.addLine(to: g.p(8.382, 15.098))
+            p.addLine(to: g.p(9.000, 15.000)); p.addLine(to: g.p(13.000, 15.000))
+            p.addEllipse(in: g.e(9.000, 9.000, 2.000))
+            p.addEllipse(in: g.e(15.000, 15.000, 2.000))
+            p.move(to: g.p(5.000, 3.000)); p.addLine(to: g.p(19.000, 3.000))
+            p.addLine(to: g.p(19.618, 3.098)); p.addLine(to: g.p(20.176, 3.382))
+            p.addLine(to: g.p(20.618, 3.824)); p.addLine(to: g.p(20.902, 4.382))
+            p.addLine(to: g.p(21.000, 5.000)); p.addLine(to: g.p(21.000, 19.000))
+            p.addLine(to: g.p(20.902, 19.618)); p.addLine(to: g.p(20.618, 20.176))
+            p.addLine(to: g.p(20.176, 20.618)); p.addLine(to: g.p(19.618, 20.902))
+            p.addLine(to: g.p(19.000, 21.000)); p.addLine(to: g.p(5.000, 21.000))
+            p.addLine(to: g.p(4.382, 20.902)); p.addLine(to: g.p(3.824, 20.618))
+            p.addLine(to: g.p(3.382, 20.176)); p.addLine(to: g.p(3.098, 19.618))
+            p.addLine(to: g.p(3.000, 19.000)); p.addLine(to: g.p(3.000, 5.000))
+            p.addLine(to: g.p(3.098, 4.382)); p.addLine(to: g.p(3.382, 3.824))
+            p.addLine(to: g.p(3.824, 3.382)); p.addLine(to: g.p(4.382, 3.098))
+            p.addLine(to: g.p(5.000, 3.000))
 
         case .fileHeadphone:  // 音源 — file-headphone（文档折角 + 耳机）
             // 文档外框（左/顶/右/底 + 右上折角）

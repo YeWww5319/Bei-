@@ -90,8 +90,8 @@ struct PlayerActionIcon: View {
                         .offset(x: size * 0.22, y: size * 0.22)
                 }
             case .source:
-                // 🔴 2026-11-22：音源按钮按参考图换成收件盒（圆角外框 + 顶部横条 + V 形收口）。
-                LucideIcon(icon: .audioSourceBox, size: size, color: tint)
+                // 🔴 2026-11-22（二）：音源按钮按最新参考图换成 circuit-board（电路板）。
+                LucideIcon(icon: .circuitBoard, size: size, color: tint)
             }
         }
         .frame(width: size, height: size)

@@ -542,7 +542,22 @@ final class DownloadManager: NSObject, ObservableObject {
     // MARK: - 查询
 
     func item(for song: Song) -> DownloadItem? {
-        items.first { $0.id == song.id }
+        if let exact = items.first(where: { $0.id == song.id }) { return exact }
+        // 🔴 2026-11-22：同一首歌在「搜索结果」和「云端歌单」接口里 hash 可能不同 →
+        //    Song.id（kg:hash）不同 → 按 id 查不到，误判「未下载」，进而重复下载、
+        //    本地音乐出现两个一样的。这里按「歌名 + 歌手」归一化兜底匹配已下载项。
+        return items.first { Self.sameTrack($0.song, song) }
+    }
+
+    /// 同曲判定：id 相同，或（去后缀/空白/大小写后的）歌名 + 歌手都相同。
+    static func sameTrack(_ a: Song, _ b: Song) -> Bool {
+        if a.id == b.id { return true }
+        let ta = a.cleanTitle.filter { !$0.isWhitespace }.lowercased()
+        let tb = b.cleanTitle.filter { !$0.isWhitespace }.lowercased()
+        guard !ta.isEmpty, ta == tb else { return false }
+        let aa = a.artist.filter { !$0.isWhitespace }.lowercased()
+        let ab = b.artist.filter { !$0.isWhitespace }.lowercased()
+        return aa == ab
     }
 
     func isDownloaded(_ song: Song) -> Bool { localURL(for: song) != nil }
