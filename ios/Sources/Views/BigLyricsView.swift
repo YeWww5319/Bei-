@@ -198,18 +198,48 @@ struct BigLyricsView: View {
         let isPicked = pick.isPicking && pick.pickedIndex == idx
         let scale = CGFloat(max(0.6, min(1.6, lyricsFontScale)))
 
-        return VStack(spacing: 4) {
-            Text(line.text)
-                .font(.system(size: textSize(isActive: isActive, isPicked: isPicked) * scale,
-                              weight: isActive || isPicked ? .bold : .medium))
-                .foregroundStyle(textColor(isActive: isActive, isPicked: isPicked, isNear: isNear))
-                .multilineTextAlignment(.center)
+        // 🔴 2026-11-23(一)：酷狗「滑块播放」样式 —— 中心行整行是一条半透明横条：
+        //    左边显示该行时间戳（如 2:25）、中间放大歌词、右边一个播放三角 ▶；
+        //    点整条即从该行播放。不再用之前那个 Capsule「从这行播放」按钮。
+        let pickedBar = ZStack {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(AppStyle.accent.opacity(0.28))
+            HStack(spacing: 8) {
+                Text(line.time.clockString)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(width: 34, alignment: .leading)
+                    .fixedSize()
 
-            // 🔴 2026-11-22(日)：中心线放大后，旁边出现「从这行播放」按钮。
+                Text(line.text)
+                    .font(.system(size: (LyricsFontScale.activeBase + 3) * scale,
+                                  weight: .semibold))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.95))
+                    .frame(width: 34, alignment: .trailing)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+
+        return VStack(spacing: 4) {
             if isPicked {
-                playFromButton(line: line, proxy: proxy)
-                    .padding(.top, 6)
-                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                pickedBar
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            } else {
+                Text(line.text)
+                    .font(.system(size: textSize(isActive: isActive, isPicked: false) * scale,
+                                  weight: isActive ? .bold : .medium))
+                    .foregroundStyle(textColor(isActive: isActive, isPicked: false, isNear: isNear))
+                    .multilineTextAlignment(.center)
             }
 
             if showsTranslation, let translation = line.translation, !translation.isEmpty {
@@ -233,29 +263,17 @@ struct BigLyricsView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            guard let seek = onSeek else { return }
-            if pick.isPicking { suppressResumeScroll = true }
-            seek(line.time)
-            pick.end()
-            Haptics.light()
+            guard onSeek != nil else { return }
+            // 🔴 2026-11-23(一)：选行态点整条高亮条（含时间/三角）→ 走 playFromHere
+            //    （seek + 自己滚到目标行 + Haptics）；非选行态点行 → 保持原来的直接跳播。
+            if pick.isPicking {
+                playFromHere(line, proxy: proxy)
+            } else {
+                onSeek?(line.time)
+                Haptics.light()
+            }
         }
         .id(line.id)
-    }
-
-    private func playFromButton(line: LyricLine, proxy: ScrollViewProxy) -> some View {
-        Button { playFromHere(line, proxy: proxy) } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 10))
-                Text("从这行播放")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(AppStyle.accent.opacity(0.92)))
-            .foregroundStyle(.white)
-        }
-        .buttonStyle(.plain)
     }
 
     private func textSize(isActive: Bool, isPicked: Bool) -> CGFloat {

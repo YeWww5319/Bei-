@@ -154,10 +154,50 @@ final class LibraryStore: ObservableObject {
         return favoriteIDs.contains(song.id)
     }
 
-    /// 🔴 2026-11-22(四)：用户主动取消过收藏的歌 id。
+    /// 🔴 2026-11-23(一)根因修复：用户主动取消过收藏的歌 id。
     ///    歌单详情页重新加载 / 后台补齐时用它过滤，避免已取消的歌从云端数据里「刷出来」。
+    ///
+    ///    🔴 之前只按精确 id 判定，导致反复出现的「取消后再收藏、默认收藏列表不显示」：
+    ///    同一首歌在【播放页/搜索页】收藏时的 Song 实例 id 与【默认收藏歌单】里的实例 id
+    ///    可能不同（一个带 hash、一个不带，或 title 带 .mp3 等变体）。取消收藏时排除的是
+    ///    歌单实例 id，重新收藏时 toggleFavorite 只 `excludedFavoriteIDs.remove(song.id)`
+    ///    移除播放页实例 id → 歌单里的旧 id 残留在集合里 → withoutExcludedFavorites /
+    ///    didAdd 接收器的 filter 把刚收藏的这一行当成「用户取消过」过滤掉，界面不显示。
+    ///
+    ///    正解：排除集合是【本地收藏表】的补集 —— 只要这首歌现在在 favorites 里，
+    ///    就绝不能被当成「已取消」。按 id 或「歌名+歌手」双判据命中 favorites 即返回 false。
+    ///    这样无论实例 id 怎么变，重新收藏后所有页面立刻一致显示，无需重进。
     func isExcludedFavorite(_ song: Song) -> Bool {
-        excludedFavoriteIDs.contains(song.id)
+        // 优先：当前仍在收藏表里 → 一定不是「已取消」（同名不同 id 变体也算）。
+        if isFavorite(song) { return false }
+        if favorites.contains(where: { $0.id == song.id ||
+            (!song.cleanTitle.isEmpty && $0.cleanTitle == song.cleanTitle && $0.artist == song.artist) }) {
+            return false
+        }
+        return excludedFavoriteIDs.contains(song.id)
+    }
+
+    /// 把这首歌所有「已知 id 变体」记进排除集合：当前 id + songCache 里歌名/歌手相同的其它 id。
+    /// 🔴 同一首歌在播放页 / 搜索页 / 歌单页的实例 id 可能不同，取消收藏必须把这些变体一起挡住，
+    ///    否则云端歌单用另一个 id 刷出来时，`isExcludedFavorite` 判不出来又会显示（红心取消不掉）。
+    private func excludeVariants(of song: Song) {
+        var ids = Set<String>([song.id])
+        for cached in songCache.values where !song.cleanTitle.isEmpty &&
+            cached.cleanTitle == song.cleanTitle && cached.artist == song.artist {
+            ids.insert(cached.id)
+        }
+        excludedFavoriteIDs.formUnion(ids)
+        persist(Array(excludedFavoriteIDs), key: key("favExcluded"))
+    }
+
+    /// 重新收藏时把这首歌所有已知 id 变体从排除集合清掉，兼容不同页面实例 id 不一致。
+    private func unexcludeVariants(of song: Song) {
+        var ids = Set<String>([song.id])
+        for cached in songCache.values where !song.cleanTitle.isEmpty &&
+            cached.cleanTitle == song.cleanTitle && cached.artist == song.artist {
+            ids.insert(cached.id)
+        }
+        excludedFavoriteIDs.subtract(ids)
     }
 
     /// 🔴 2026-11-15：酷狗云歌单「默认收藏」与本地收藏状态同步。
@@ -187,12 +227,13 @@ final class LibraryStore: ObservableObject {
         if let index = favorites.firstIndex(where: { $0.id == song.id }) {
             // 取消收藏：本地移除 + 从酷狗「默认收藏」歌单移除（fire-and-forget）
             favorites.remove(at: index)
-            excludedFavoriteIDs.insert(song.id)
-            persist(Array(excludedFavoriteIDs), key: key("favExcluded"))
             persist(favorites, key: key("favorites"))
             KugouFavoriteSync.shared.songUnfavorited(song)
-            // 🔴 2026-11-22(三)：通知「默认收藏」歌单页把这一行从列表 + 缓存移除。
-            NotificationCenter.default.post(name: .auroraFavoriteDidRemove, object: song.id)
+            // 🔴 2026-11-23(一)：通知带整个 Song（不再只带 id）—— 歌单页按
+            //    「id / 歌名+歌手」双判据移除，兼容实例 id 不一致的变体。
+            //    同时把该歌所有已知 id 变体都记进排除集合，杜绝重进后从云端刷出来。
+            excludeVariants(of: song)
+            NotificationCenter.default.post(name: .auroraFavoriteDidRemove, object: song)
             // 🔴 2026-11-22(五)：通知播放页/迷你条刷新当前歌红心（去掉残留红心）。
             NotificationCenter.default.post(name: .auroraFavoriteDidChange, object: song.id)
             return false
@@ -204,7 +245,8 @@ final class LibraryStore: ObservableObject {
             return isFavorite(song)  // 保持原状态（此处必为 false）
         }
         favorites.insert(song, at: 0)
-        excludedFavoriteIDs.remove(song.id)
+        // 🔴 2026-11-23(一)：清掉这首歌所有已知 id 变体的排除标记（不同页面实例 id 不一致）。
+        unexcludeVariants(of: song)
         persist(Array(excludedFavoriteIDs), key: key("favExcluded"))
         persist(favorites, key: key("favorites"))
         remember(song)

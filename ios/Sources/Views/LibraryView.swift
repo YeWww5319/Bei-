@@ -1176,18 +1176,26 @@ struct KugouPlaylistDetail: View {
         // 🔴 2026-11-22(三)：在「默认收藏」页取消收藏 → 把这首歌从列表 + 详情缓存移除，
         //    否则云端已移除、本地列表却还显示，用户以为「取消收藏没生效」。
         .onReceive(NotificationCenter.default.publisher(for: .auroraFavoriteDidRemove)) { note in
-            guard name == "默认收藏", let removedID = note.object as? String else { return }
-            // 🔴 2026-11-22(日)：排序缓存指纹 = count|first.id|last.id。取消的若不是首尾行，
-            //    指纹不变 → displaySongs 直接吃旧缓存 → 界面上这一行还在（用户实测
-            //    「取消收藏后外面列表还有红心/还在」）。显式失效，强制重排。
+            // 🔴 2026-11-23(一)：通知现在带整个 Song，按 id / 歌名+歌手双判据移除，
+            //    兼容歌单实例 id 与播放页/搜索页实例 id 不一致的变体。
+            let removed: Song?
+            if let song = note.object as? Song {
+                removed = song
+            } else if let rid = note.object as? String {
+                removed = songs.first { $0.id == rid }   // 兼容旧调用
+            } else {
+                removed = nil
+            }
+            guard name == "默认收藏", let removed else { return }
+            let same: (Song) -> Bool = { $0.id == removed.id ||
+                (!removed.cleanTitle.isEmpty && $0.cleanTitle == removed.cleanTitle && $0.artist == removed.artist) }
             PlaylistSortMemo.shared.invalidate(sortListKey)
             withAnimation(.easeOut(duration: 0.2)) {
-                songs.removeAll { $0.id == removedID }
+                songs.removeAll(where: same)
             }
-            // 🔴 2026-11-22(六)：**不要**从详情缓存里物理删除 —— 之前删掉后，取消再重新收藏
-            //    就再也回不来（缓存里没这行）。现在保留缓存，靠 excludedFavoriteIDs +
-            //    withoutExcludedFavorites 在 load() 时过滤：取消后不显示，重新收藏清掉
-            //    excluded 后缓存里仍有这行 → 自然恢复显示。
+            // 同步从详情缓存移除，保证重进页面也不会看到已取消的行；
+            // 重新收藏时 didAdd 接收器会把新实例插回缓存，不依赖旧缓存兜底。
+            Self.detailCache[listid] = (Self.detailCache[listid] ?? []).filter { !same($0) }
         }
         // 🔴 2026-11-22(日)二轮修复：取消收藏后再次收藏，默认收藏列表要【即时】显示这首歌。
         //    上一版只把通知里的 Song insert 到 songs[0]，但仍会失败，原因有两个：
@@ -1197,15 +1205,15 @@ struct KugouPlaylistDetail: View {
         //    再按当前 excluded 过滤；同时失效排序缓存、写回 detailCache（挡住晚到的快照）。
         .onReceive(NotificationCenter.default.publisher(for: .auroraFavoriteDidAdd)) { note in
             guard name == "默认收藏", let added = note.object as? Song else { return }
-            let lib = LibraryStore.shared
-            var rebuilt = Self.detailCache[listid] ?? songs
-            // 播放页/搜索页传来的 Song 实例 id 可能与列表里的不同（本地/网络变体），
-            // 用 id 或「歌名+歌手」双判据避免重复插入。
+            // 🔴 2026-11-23(一)：以当前列表为基底插入刚收藏的歌，不再从 detailCache 整体重建
+            //    （重建会把后台 enrich 的补齐结果打回、且旧实例 id 与新收藏实例 id 不一致时
+            //    容易出错）。isExcludedFavorite 已改为以 favorites 为权威，刚收藏的歌不会被过滤。
+            // 同一首歌 id / 「歌名+歌手」双判据去重，避免重复行。
             let same: (Song) -> Bool = { $0.id == added.id ||
-                ($0.cleanTitle == added.cleanTitle && $0.artist == added.artist) }
-            if !rebuilt.contains(where: same) { rebuilt.insert(added, at: 0) }
-            // 清掉当前仍被排除的行（刚收藏的这首 excluded 已被 toggleFavorite 移除）。
-            rebuilt = rebuilt.filter { !lib.isExcludedFavorite($0) }
+                (!added.cleanTitle.isEmpty && $0.cleanTitle == added.cleanTitle && $0.artist == added.artist) }
+            if songs.contains(where: same) { return }
+            var rebuilt = songs
+            rebuilt.insert(added, at: 0)
             Self.detailCache[listid] = rebuilt
             PlaylistSortMemo.shared.invalidate(sortListKey)
             withAnimation(.easeOut(duration: 0.2)) { songs = rebuilt }

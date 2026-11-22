@@ -1122,29 +1122,19 @@ private struct ArtistHeroLayer: UIViewRepresentable {
             return (view, host)
         }
 
-        /// 🔴 2026-11-22(日)：写真 URL 异步回填后重建 hosted 大图。
-        ///    只在已安装（heroView/hosting 都在）、且 key 真的变了、且未拆除时替换；
-        ///    新 rootView 用刚存下来的最新 hero，避免首帧捕获到歌曲封面。
+        /// 🔴 2026-11-23(一)：写真 URL 异步回填后更新 hosted 大图。
+        ///    🔴 绝不重建 / 替换 heroView —— installIfNeeded 里的 `reveal` 闭包按身份
+        ///       捕获了它（`heroView === view`），一旦替换，`reveal` 恒 false →
+        ///       `transitioning` 永久卡在 true → 轮询把大图永久 isHidden（截图：播放页
+        ///       进歌手页整块空白）。写真回填正好发生在 0.42s 转场窗口内，必现。
+        ///    正解：只更新 UIHostingController.rootView，浮层本身（frame / 层级 /
+        ///       isHidden / 转场状态）完全不动，SwiftUI 侧自然重绘出写真封面。
         func updateHero(key: String, hero: AnyView) {
             guard key != heroKey else { return }
             heroKey = key
             self.hero = hero
-            guard !tornDown, let oldView = heroView, hosting != nil,
-                  let parent = container, let bar = navController?.navigationBar else {
-                // 还没安装：installIfNeeded 会用刚更新的 hero 首次构建。
-                return
-            }
-            let (newView, newHost) = makeHost()
-            newView.frame = oldView.frame
-            // 保持当前可见 / 转场状态，避免替换瞬间闪一下。
-            newView.isHidden = oldView.isHidden
-            newView.alpha = oldView.alpha
-            // 写真在进场（push）阶段异步回填，此刻大图恒在 bar 之下，原样还原层级即可。
-            oldView.removeFromSuperview()
-            parent.insertSubview(newView, belowSubview: bar)
-            hosting = newHost
-            heroView = newView
-            applyFrame()
+            // 已安装：就地换 rootView；未安装：installIfNeeded 会用最新 hero 首次构建。
+            if !tornDown { hosting?.rootView = hero }
         }
         private weak var container: UIView?
         private weak var hostVC: UIViewController?
