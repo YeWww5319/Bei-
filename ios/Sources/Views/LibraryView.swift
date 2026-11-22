@@ -1852,12 +1852,18 @@ private struct PlaylistFirstCover: View {
                 var newInfo = CoverInfo()
                 newInfo.songID = first?.id ?? ""
                 if let first {
-                    newInfo.keys = first.coverFallbackKeys
+                    let keys = first.coverFallbackKeys
+                    newInfo.keys = keys
                     // ⚠️ 必须主动 resolve 出直连 URL 当首选：CoverImage 的 url 非 nil 时
                     //    不会走 fallbackKeys 联网解析，传歌单封面 URL 会一直显示书法封面。
-                    newInfo.art = first.artworkURL
-                        ?? CoverResolver.shared.firstAvailable(first.coverFallbackKeys)
-                        ?? (await CoverResolver.shared.resolveCover(for: first.coverFallbackKeys))
+                    //    注意 await 不能放在 ?? 的 autoclosure 里，改成显式分支。
+                    if let direct = first.artworkURL {
+                        newInfo.art = direct
+                    } else if let registered = CoverResolver.shared.firstAvailable(keys) {
+                        newInfo.art = registered
+                    } else {
+                        newInfo.art = await CoverResolver.shared.resolveCover(for: keys)
+                    }
                 }
                 Self.store(playlist.id, info: newInfo)
                 await MainActor.run { info = newInfo; loaded = true }
