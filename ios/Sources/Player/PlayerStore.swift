@@ -294,6 +294,19 @@ final class PlayerStore: ObservableObject {
         installNetworkMonitor()
         installQualityMonitor()
         installSoundEffectObserver()
+        installFavoriteObserver()
+    }
+
+    /// 🔴 2026-11-22(五)：任意页面收藏增删后，若影响的是当前歌，立刻刷新红心。
+    ///    之前 isLiked 只在切歌/自己 toggle 时更新，收藏列表里取消收藏后播放页/迷你条红心还亮。
+    private func installFavoriteObserver() {
+        let token = NotificationCenter.default.addObserver(
+            forName: .auroraFavoriteDidChange, object: nil, queue: .main) { [weak self] note in
+                guard let self, let changedID = note.object as? String,
+                      let current = self.current, current.id == changedID else { return }
+                self.isLiked = LibraryStore.shared.isFavorite(current)
+            }
+        observers.append(token)
     }
 
     /// 🔴 音效：监听预设变化 —— 用户切了音效预设，立刻把新的 audioMix 挂到当前曲目。

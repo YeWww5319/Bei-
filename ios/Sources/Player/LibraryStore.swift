@@ -193,6 +193,8 @@ final class LibraryStore: ObservableObject {
             KugouFavoriteSync.shared.songUnfavorited(song)
             // 🔴 2026-11-22(三)：通知「默认收藏」歌单页把这一行从列表 + 缓存移除。
             NotificationCenter.default.post(name: .auroraFavoriteDidRemove, object: song.id)
+            // 🔴 2026-11-22(五)：通知播放页/迷你条刷新当前歌红心（去掉残留红心）。
+            NotificationCenter.default.post(name: .auroraFavoriteDidChange, object: song.id)
             return false
         }
         // 🔴 2026-11-22：未登录不允许点亮收藏，直接拉起扫码登录（全局监听在 RootView）。
@@ -208,6 +210,8 @@ final class LibraryStore: ObservableObject {
         remember(song)
         // 🔴 v2.7.7：收藏自动同步到酷狗「默认收藏」歌单（fire-and-forget）
         KugouFavoriteSync.shared.songFavorited(song)
+        // 🔴 2026-11-22(五)：通知播放页/迷你条刷新当前歌红心。
+        NotificationCenter.default.post(name: .auroraFavoriteDidChange, object: song.id)
         return true
     }
 

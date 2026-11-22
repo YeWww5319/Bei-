@@ -1784,6 +1784,9 @@ extension Notification.Name {
     /// 🔴 2026-11-22(三)：用户取消收藏了一首歌，object = song.id。
     ///    「默认收藏」歌单页收到后把该行从列表 + 详情缓存里移除（取消收藏 = 从默认收藏移除）。
     static let auroraFavoriteDidRemove = Notification.Name("aurora.favoriteDidRemove")
+    /// 🔴 2026-11-22(五)：任意页面收藏状态变化（增/删），object = song.id。
+    ///    PlayerStore 收到后刷新当前歌的 isLiked，解决「收藏列表取消了、播放页/迷你条红心还亮」。
+    static let auroraFavoriteDidChange = Notification.Name("aurora.favoriteDidChange")
 }
 
 /// 🔴 2026-11-22(五)：歌单列表行封面 —— 优先显示「歌单第一首歌的专辑图」。

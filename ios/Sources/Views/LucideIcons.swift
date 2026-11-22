@@ -103,6 +103,9 @@ enum Lucide: String, CaseIterable {
     case star  // 2026-11-22(三) 动作行·音效（空心五角星，Lucide star）— 已被 disc3 取代，保留备用
     case bug  // 🔴 2026-11-22(四) 动作行·音源（甲虫/芯片造型，Lucide bug）按参考图
     case disc3  // 🔴 2026-11-22(四) 动作行·音效（唱片：外圆+内圆+两条弧线，Lucide disc-3）按参考图
+    case squareArrowDownEnter  // 🔴 2026-11-22(五) 动作行·下载（顶部开口方框+向下进入箭头，Lucide square-arrow-down-enter）
+    case listPlus  // 🔴 2026-11-22(五) 音源弹窗·导入按钮（列表+加号，Lucide list-plus）
+    case listRestart  // 🔴 2026-11-22(五) 音源弹窗·检测按钮（列表+旋转箭头，Lucide list-restart）
 
     /// 在给定 rect 内构造该图标的 Path（描边路径，未闭合填充由调用方决定）。
     func path(in rect: CGRect) -> Path {
@@ -1462,6 +1465,78 @@ enum Lucide: String, CaseIterable {
             p.addLine(to: g.p(12.347, 17.030)); p.addLine(to: g.p(13.000, 17.268))
             p.addLine(to: g.p(13.532, 17.714)); p.addLine(to: g.p(13.879, 18.316))
             p.addLine(to: g.p(14.000, 19.000))
+
+        case .squareArrowDownEnter:  // 下载·方框下箭头 — square-arrow-down-enter
+            p.move(to: g.p(9.000, 3.000))
+            p.addLine(to: g.p(5.000, 3.000))
+            p.addLine(to: g.p(4.382, 3.098))
+            p.addLine(to: g.p(3.824, 3.382))
+            p.addLine(to: g.p(3.382, 3.824))
+            p.addLine(to: g.p(3.098, 4.382))
+            p.addLine(to: g.p(3.000, 5.000))
+            p.addLine(to: g.p(3.000, 19.000))
+            p.addLine(to: g.p(3.098, 19.618))
+            p.addLine(to: g.p(3.382, 20.176))
+            p.addLine(to: g.p(3.824, 20.618))
+            p.addLine(to: g.p(4.382, 20.902))
+            p.addLine(to: g.p(5.000, 21.000))
+            p.addLine(to: g.p(19.000, 21.000))
+            p.addLine(to: g.p(19.618, 20.902))
+            p.addLine(to: g.p(20.176, 20.618))
+            p.addLine(to: g.p(20.618, 20.176))
+            p.addLine(to: g.p(20.902, 19.618))
+            p.addLine(to: g.p(21.000, 19.000))
+            p.addLine(to: g.p(21.000, 5.000))
+            p.addLine(to: g.p(20.902, 4.382))
+            p.addLine(to: g.p(20.618, 3.824))
+            p.addLine(to: g.p(20.176, 3.382))
+            p.addLine(to: g.p(19.618, 3.098))
+            p.addLine(to: g.p(19.000, 3.000))
+            p.addLine(to: g.p(15.000, 3.000))
+            p.move(to: g.p(12.000, 2.000))
+            p.addLine(to: g.p(12.000, 12.000))
+            p.move(to: g.p(8.000, 9.000))
+            p.addLine(to: g.p(12.000, 13.000))
+            p.addLine(to: g.p(16.000, 9.000))
+
+        case .listPlus:  // 导入·列表加号 — list-plus
+            p.move(to: g.p(16.000, 5.000))
+            p.addLine(to: g.p(3.000, 5.000))
+            p.move(to: g.p(11.000, 12.000))
+            p.addLine(to: g.p(3.000, 12.000))
+            p.move(to: g.p(16.000, 19.000))
+            p.addLine(to: g.p(3.000, 19.000))
+            p.move(to: g.p(18.000, 9.000))
+            p.addLine(to: g.p(18.000, 15.000))
+            p.move(to: g.p(21.000, 12.000))
+            p.addLine(to: g.p(15.000, 12.000))
+
+        case .listRestart:  // 检测·列表旋转 — list-restart
+            p.move(to: g.p(21.000, 5.000))
+            p.addLine(to: g.p(3.000, 5.000))
+            p.move(to: g.p(7.000, 12.000))
+            p.addLine(to: g.p(3.000, 12.000))
+            p.move(to: g.p(7.000, 19.000))
+            p.addLine(to: g.p(3.000, 19.000))
+            p.move(to: g.p(12.000, 18.000))
+            p.addLine(to: g.p(13.115, 19.084))
+            p.addLine(to: g.p(14.509, 19.773))
+            p.addLine(to: g.p(16.047, 20.000))
+            p.addLine(to: g.p(17.581, 19.743))
+            p.addLine(to: g.p(18.962, 19.028))
+            p.addLine(to: g.p(20.056, 17.924))
+            p.addLine(to: g.p(20.758, 16.536))
+            p.addLine(to: g.p(21.000, 15.000))
+            p.addLine(to: g.p(20.780, 13.609))
+            p.addLine(to: g.p(20.141, 12.355))
+            p.addLine(to: g.p(19.145, 11.359))
+            p.addLine(to: g.p(17.891, 10.720))
+            p.addLine(to: g.p(16.500, 10.500))
+            p.addCurve(to: g.p(13.090, 11.910), control1: g.p(15.170, 10.500), control2: g.p(13.960, 11.040))
+            p.addLine(to: g.p(11.000, 14.000))
+            p.move(to: g.p(11.000, 10.000))
+            p.addLine(to: g.p(11.000, 14.000))
+            p.addLine(to: g.p(15.000, 14.000))
 
         }
         return p

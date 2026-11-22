@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// 2026-11-20：播放器动作行「音源」按钮弹出的半屏音源面板。
 ///
@@ -21,7 +22,11 @@ struct SourcePickerSheet: View {
     let onDismiss: () -> Void
 
     /// 每行高度（含分隔线），既是视觉高度也是拖动换算行距的标尺。
-    private let rowHeight: CGFloat = 60
+    /// 🔴 2026-11-22(五)：60→72，解决「两个音源靠太近」——标题+详情两行更舒展。
+    private let rowHeight: CGFloat = 72
+
+    /// 🔴 2026-11-22(五)：导入后的提示（成功/失败条数），短暂显示后自动消失。
+    @State private var importMessage: String?
 
     // MARK: 长按拖动排序状态（父视图只持有跨行才变的量）
     /// 只用 id 保存顺序；行内容一律从 store 按 id 实时取，避免状态不同步。
@@ -50,6 +55,13 @@ struct SourcePickerSheet: View {
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(AppStyle.primaryText)
                 Spacer(minLength: 8)
+                // 🔴 2026-11-22(五)：检测音源前加「导入」按钮（list-plus 图标）。
+                Button { importSources() } label: {
+                    LucideIcon(icon: .listPlus, size: 18, color: AppStyle.accent)
+                        .frame(width: 26, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                 if !store.sources.isEmpty {
                     Button {
                         guard !isChecking else { return }
@@ -60,10 +72,13 @@ struct SourcePickerSheet: View {
                         }
                     } label: {
                         HStack(spacing: 4) {
+                            // 🔴 2026-11-22(五)：检测按钮改用 list-restart 图标（列表+旋转箭头）。
                             if isChecking {
                                 ProgressView()
                                     .scaleEffect(0.7)
-                                    .frame(width: 13, height: 13)
+                                    .frame(width: 15, height: 15)
+                            } else {
+                                LucideIcon(icon: .listRestart, size: 16, color: AppStyle.accent)
                             }
                             Text(isChecking ? "检测中" : "检测音源")
                                 .font(.system(size: 13, weight: .medium))
@@ -90,6 +105,16 @@ struct SourcePickerSheet: View {
             .compatScrollContentBackground(.hidden)
             // 🔴 高度贴合内容：行数 × 行高（最多给 6 行，再多交给面板整体高度）
             .frame(height: min(CGFloat(max(1, store.sources.count)) * rowHeight + 8, rowHeight * 6 + 8))
+
+            // 🔴 导入结果提示（短暂显示，不占常驻高度）
+            if let msg = importMessage {
+                Text(msg)
+                    .font(.system(size: 12))
+                    .foregroundStyle(AppStyle.secondaryText)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+                    .transition(.opacity)
+            }
         }
         // 🔴 背景透明，交给外层面板按深浅模式绘制。
         .background(Color.clear)
@@ -158,6 +183,69 @@ struct SourcePickerSheet: View {
         }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
+
+    // MARK: - 导入音源（复用 SourceSettingsView 的解析规则）
+
+    /// 🔴 2026-11-22(五)：顶栏导入按钮 —— 选文件 → 先按 JSON 配置解析，认不出当 JS 脚本存。
+    private func importSources() {
+        var types: [UTType] = [.item, .json, .plainText, .data]
+        for ext in ["txt", "conf", "js", "json5", "ini"] {
+            if let t = UTType(filenameExtension: ext) { types.append(t) }
+        }
+        FilePicker.pick(types: types) { urls in
+            Task { await self.performImport(urls) }
+        }
+    }
+
+    @MainActor
+    private func performImport(_ urls: [URL]) async {
+        var added = 0
+        for url in urls {
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+                  let text = Self.decodeText(data) else { continue }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            let parsed = SourceStore.parseImport(text)
+            if !parsed.isEmpty {
+                for source in parsed { store.upsertReplacingByName(source) }
+                added += parsed.count
+                continue
+            }
+            let isScript = ["js", "mjs", "cjs", "txt"].contains(url.pathExtension.lowercased())
+                || text.contains("globalThis") || text.contains("module.exports")
+                || text.contains("require(") || text.contains("function")
+            if isScript {
+                let name = url.deletingPathExtension().lastPathComponent
+                store.upsertReplacingByName(ThirdPartySource(
+                    name: name.isEmpty ? "导入的脚本音源" : name,
+                    kind: .script, script: text))
+                added += 1
+            }
+        }
+        importMessage = added > 0 ? "已导入 \(added) 个音源" : "未识别到可导入的音源"
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
+        importMessage = nil
+    }
+
+    /// 解码文本（UTF-8 BOM / UTF-16 / GBK），与 SourceSettingsView 保持一致。
+    private static func decodeText(_ data: Data) -> String? {
+        if data.count >= 3, data[0] == 0xEF, data[1] == 0xBB, data[2] == 0xBF {
+            return String(data: data.dropFirst(3), encoding: .utf8)
+        }
+        if let text = String(data: data, encoding: .utf8) { return text }
+        if data.count >= 2 {
+            let le = data[0] == 0xFF && data[1] == 0xFE
+            let be = data[0] == 0xFE && data[1] == 0xFF
+            if le || be {
+                return String(data: data, encoding: le ? .utf16LittleEndian : .utf16BigEndian)
+            }
+        }
+        return String(data: data, encoding: .init(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))))
+    }
 }
 
 /// 单个音源行：把拖动状态（dragOffset / isDragging）放在这里，
@@ -215,7 +303,7 @@ private struct SourcePickerRowView: View {
     private var rowVisual: some View {
         HStack(spacing: 10) {
             healthDot
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(source.isBundled ? "默认音源" : source.name)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(AppStyle.primaryText)

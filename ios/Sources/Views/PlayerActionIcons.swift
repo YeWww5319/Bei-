@@ -46,16 +46,10 @@ struct PlayerActionIcon: View {
                 // 🔴 Lucide 心形（项目图标源 lucide-icons）：选中(filled)填红、未选描边。
                 LucideIcon(icon: .heart, size: size, color: tint, filled: active)
             case .download:
-                // 🔴 2026-11-21：用户要求改回旧版「外框+箭头+VIP 角标」。
-                ZStack {
-                    DownloadBox().stroke(tint, style: stroke)
-                    DownloadArrow().stroke(tint, style: stroke)
-                    Text("VIP")
-                        .font(.system(size: size * 0.23, weight: .heavy))
-                        .italic()
-                        .foregroundStyle(tint)
-                        .offset(x: size * 0.28, y: size * 0.20)
-                }
+                // 🔴 2026-11-22(五)：按参考图换成 square-arrow-down-enter（顶部开口方框+下箭头）。
+                //    与收藏/音效/音源同为 Lucide 图标：同一 24pt 画布、同一线宽 → 大小/线条/基线统一齐平。
+                //    去掉原 VIP 角标（参考图无角标，且角标让下载视觉偏大、不齐平）。
+                LucideIcon(icon: .squareArrowDownEnter, size: size, color: tint)
             case .quality:
                 ZStack {
                     QualityGlyph().stroke(tint, style: stroke)
@@ -79,16 +73,8 @@ struct PlayerActionIcon: View {
             case .more:
                 MoreGlyph().fill(tint)
             case .downloaded:
-                // 🔴 2026-11-21：与「未下载」同款外框+箭头，角标「已下载」区分状态。
-                ZStack {
-                    DownloadBox().stroke(tint, style: stroke)
-                    DownloadArrow().stroke(tint, style: stroke)
-                    Text("已下载")
-                        .font(.system(size: size * 0.19, weight: .heavy))
-                        .italic()
-                        .foregroundStyle(tint)
-                        .offset(x: size * 0.22, y: size * 0.22)
-                }
+                // 🔴 2026-11-22(五)：与「未下载」同款 square-arrow-down-enter，用主题蓝区分已下载状态。
+                LucideIcon(icon: .squareArrowDownEnter, size: size, color: AppStyle.accent)
             case .source:
                 // 🔴 2026-11-22(四)：音源按钮按最新参考图换成 bug（甲虫/芯片造型）。
                 LucideIcon(icon: .bug, size: size, color: tint)
