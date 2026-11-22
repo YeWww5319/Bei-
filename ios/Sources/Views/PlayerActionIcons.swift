@@ -73,8 +73,10 @@ struct PlayerActionIcon: View {
             case .more:
                 MoreGlyph().fill(tint)
             case .downloaded:
-                // 🔴 2026-11-22(五)：与「未下载」同款 square-arrow-down-enter，用主题蓝区分已下载状态。
-                LucideIcon(icon: .squareArrowDownEnter, size: size, color: AppStyle.accent)
+                // 🔴 2026-11-22(六)：按用户要求 —— 已下载与未下载用同一个 square-arrow-down-enter
+                //    图标（不再两个图标切换），颜色也统一成白色 tint；已下载状态靠点按后的
+                //    「已下载」弹窗提示区分（见 PlayerView.classicDownloadButton）。
+                LucideIcon(icon: .squareArrowDownEnter, size: size, color: tint)
             case .source:
                 // 🔴 2026-11-22(四)：音源按钮按最新参考图换成 bug（甲虫/芯片造型）。
                 LucideIcon(icon: .bug, size: size, color: tint)

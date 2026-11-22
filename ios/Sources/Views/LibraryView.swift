@@ -1180,9 +1180,23 @@ struct KugouPlaylistDetail: View {
             withAnimation(.easeOut(duration: 0.2)) {
                 songs.removeAll { $0.id == removedID }
             }
-            // 同步进详情缓存，退出再进不再出现
-            if var cached = Self.detailCache[listid] {
-                cached.removeAll { $0.id == removedID }
+            // 🔴 2026-11-22(六)：**不要**从详情缓存里物理删除 —— 之前删掉后，取消再重新收藏
+            //    就再也回不来（缓存里没这行）。现在保留缓存，靠 excludedFavoriteIDs +
+            //    withoutExcludedFavorites 在 load() 时过滤：取消后不显示，重新收藏清掉
+            //    excluded 后缓存里仍有这行 → 自然恢复显示。
+        }
+        // 🔴 2026-11-22(六)：取消收藏后再次收藏 → 把这首歌插回「默认收藏」列表 + 详情缓存，
+        //    否则缓存里没这一行，再进页面就不显示（用户实测反馈）。
+        .onReceive(NotificationCenter.default.publisher(for: .auroraFavoriteDidAdd)) { note in
+            guard name == "默认收藏", let added = note.object as? Song else { return }
+            withAnimation(.easeOut(duration: 0.2)) {
+                if !songs.contains(where: { $0.id == added.id }) {
+                    songs.insert(added, at: 0)
+                }
+            }
+            var cached = Self.detailCache[listid] ?? []
+            if !cached.contains(where: { $0.id == added.id }) {
+                cached.insert(added, at: 0)
                 Self.detailCache[listid] = cached
             }
         }
@@ -1784,6 +1798,9 @@ extension Notification.Name {
     /// 🔴 2026-11-22(三)：用户取消收藏了一首歌，object = song.id。
     ///    「默认收藏」歌单页收到后把该行从列表 + 详情缓存里移除（取消收藏 = 从默认收藏移除）。
     static let auroraFavoriteDidRemove = Notification.Name("aurora.favoriteDidRemove")
+    /// 🔴 2026-11-22(六)：用户（重新）收藏了一首歌，object = Song。
+    ///    「默认收藏」页收到后把这首歌插回列表 + 详情缓存，修复「取消后再收藏不显示」。
+    static let auroraFavoriteDidAdd = Notification.Name("aurora.favoriteDidAdd")
     /// 🔴 2026-11-22(五)：任意页面收藏状态变化（增/删），object = song.id。
     ///    PlayerStore 收到后刷新当前歌的 isLiked，解决「收藏列表取消了、播放页/迷你条红心还亮」。
     static let auroraFavoriteDidChange = Notification.Name("aurora.favoriteDidChange")

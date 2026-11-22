@@ -210,6 +210,10 @@ final class LibraryStore: ObservableObject {
         remember(song)
         // 🔴 v2.7.7：收藏自动同步到酷狗「默认收藏」歌单（fire-and-forget）
         KugouFavoriteSync.shared.songFavorited(song)
+        // 🔴 2026-11-22(六)：通知「默认收藏」页把这首歌重新插回列表 + 详情缓存 ——
+        //    之前取消收藏时把行从缓存里物理删除了，重新收藏只清了 excluded 集合，
+        //    缓存里没有这一行 → 再进默认收藏页就不显示（用户实测反馈）。
+        NotificationCenter.default.post(name: .auroraFavoriteDidAdd, object: song)
         // 🔴 2026-11-22(五)：通知播放页/迷你条刷新当前歌红心。
         NotificationCenter.default.post(name: .auroraFavoriteDidChange, object: song.id)
         return true

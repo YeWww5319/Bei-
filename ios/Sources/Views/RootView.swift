@@ -159,6 +159,54 @@ final class KugouLoginPresenter {
     }
 }
 
+/// 🔴 2026-11-22(六)：从播放页「歌手名」进入歌手主页的呈现器。
+///
+/// 播放页本身是 UIKit 全屏 present 的（盖在 TabView 上），SwiftUI sheet / NavigationLink
+/// 都挂在被遮住的 TabView 栈里，推出来看不见。这里直接用 UIKit present 到最顶层 VC，
+/// 并套一层 `UINavigationController` —— `ArtistDetailView` 的大图浮层 / 吸顶头依赖 nav.view。
+/// 歌手主页自带「返回」按钮调 `dismiss()`，模态弹出时正好关闭整个 nav。
+final class ArtistPagePresenter {
+    static let shared = ArtistPagePresenter()
+    private weak var currentNav: UINavigationController?
+    private init() {}
+
+    private var mainWindow: UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { w in
+                let s = w.screen.bounds
+                return w.bounds.width > 0
+                    && abs(w.bounds.width - s.width) < 1
+                    && abs(w.bounds.height - s.height) < 1
+            }
+    }
+
+    func present(artist: Artist) {
+        // 已有一个歌手页在显示（含转场中）→ 不重复叠
+        if let nav = currentNav, nav.presentingViewController != nil { return }
+        guard let root = mainWindow?.rootViewController else { return }
+        var top = root
+        while let presented = top.presentedViewController { top = presented }
+        guard top.presentedViewController == nil else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.present(artist: artist)
+            }
+            return
+        }
+        let host = UIHostingController(rootView:
+            ArtistDetailView(artist: artist)
+                .environmentObject(PlayerStore.shared))
+        let nav = UINavigationController(rootViewController: host)
+        // 🔴 不能隐藏 nav bar —— ArtistDetailView 的返回按钮 / 更多按钮走 toolbar，
+        //    大图浮层也用 `insertSubview(_:belowSubview: nav.navigationBar)` 定位。
+        //    它自己已 .navigationBarBackButtonHidden + 透明背景，这里保持 nav bar 即可。
+        nav.modalPresentationStyle = .fullScreen
+        currentNav = nav
+        top.present(nav, animated: true, completion: nil)
+    }
+}
+
 /// 🔴 v2.6.4：播放页容器 —— 横屏播放器时隐藏系统 home 指示条（底部那条白杠）。
 ///
 /// 为什么不用 `UIApplication.shared.isHomeIndicatorAutoHidden`：现代 iOS 由
@@ -359,27 +407,30 @@ struct MiniPlayer: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 // 第一行：歌曲名；第二行：歌手名（排第一）+ 音质
-                Text(mini.song?.title ?? "")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(AppStyle.primaryText)
-                    .lineLimit(1)
-                    .layoutPriority(1)
+                // 🔴 2026-11-22(六)：歌名与歌手都改成与列表行同款跑马灯 —— 多位歌手
+                //    （"卓依婷、林正桦"）不再被截成「…」，超宽时自动横向滚动。
+                MarqueeText(text: mini.song?.title ?? "",
+                            size: 14,
+                            weight: .medium,
+                            color: AppStyle.primaryText)
                 HStack(spacing: 6) {
-                    Text(mini.song?.artist ?? "")
-                        .font(.system(size: 11))
-                        .foregroundStyle(AppStyle.secondaryText)
-                        .lineLimit(1)
-                        .layoutPriority(1)
+                    MarqueeText(text: mini.song?.artist ?? "",
+                                size: 11,
+                                weight: .regular,
+                                color: AppStyle.secondaryText)
+                    // 标签固定尺寸、优先占位；跑马灯吃掉剩余宽度，长歌手名才滚动。
                     // 🔴 用户要求：迷你条 VIP 标签文字改灰白、跟歌手名同色（secondaryText）。
                     VIPTag(textColor: AppStyle.secondaryText)
+                        .layoutPriority(1).fixedSize()
                     // 🔴 2026-11-22：迷你条也显示当前音源标签（跟歌手名同色）。
                     if !mini.sourceName.isEmpty {
                         SourceTag(title: mini.sourceName, textColor: AppStyle.secondaryText)
+                            .layoutPriority(1).fixedSize()
                     }
                     // 🔴 3.0.0：已下载的歌曲在歌手名后面补「本地」标签，与 VIP / 音质标签同色。
                     if let song = mini.song,
                        song.source == .local || downloads.item(for: song)?.isDone == true {
-                        LocalTag()
+                        LocalTag().layoutPriority(1).fixedSize()
                     }
                     // 🔴 2026-11-15：已下载 / 本地歌曲的 `qualityName` 本身就是「本地」
                     //   （PlayerStore 里 outcome.label = "本地"），上面已经画了 LocalTag，
@@ -387,6 +438,7 @@ struct MiniPlayer: View {
                     if !mini.qualityName.isEmpty && mini.qualityName != "本地" {
                         // 🔴 用户要求：迷你条音质标签文字改灰白、跟歌手名同色（secondaryText）。
                         QualityTag(title: mini.qualityName, tint: AppStyle.secondaryText)
+                            .layoutPriority(1).fixedSize()
                     }
                 }
             }

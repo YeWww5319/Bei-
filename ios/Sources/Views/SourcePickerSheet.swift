@@ -21,9 +21,15 @@ struct SourcePickerSheet: View {
     @State private var isChecking = false
     let onDismiss: () -> Void
 
-    /// 每行高度（含分隔线），既是视觉高度也是拖动换算行距的标尺。
-    /// 🔴 2026-11-22(五)：60→72，解决「两个音源靠太近」——标题+详情两行更舒展。
+    /// 每行内容高度（标题 + 详情两行）。
     private let rowHeight: CGFloat = 72
+    /// 🔴 2026-11-22(六)：行与行之间显式间距。
+    ///    之前靠 `frame(height:)` 固定每行、行间 spacing=0，最后一行被底部挤压只剩 ~55pt
+    ///    （实测标题间距：前 4 段 72pt，最后一段 55pt），用户反馈「最下面那个贴太近」。
+    ///    现在把「行高 + 间距」拆开，每行占 rowPitch = rowHeight + rowSpacing，
+    ///    拖动换算也用 rowPitch —— 保证包括最后一行在内，所有行间距完全一致。
+    private let rowSpacing: CGFloat = 12
+    private var rowPitch: CGFloat { rowHeight + rowSpacing }
 
     /// 🔴 2026-11-22(五)：导入后的提示（成功/失败条数），短暂显示后自动消失。
     @State private var importMessage: String?
@@ -55,10 +61,10 @@ struct SourcePickerSheet: View {
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(AppStyle.primaryText)
                 Spacer(minLength: 8)
-                // 🔴 2026-11-22(五)：检测音源前加「导入」按钮（list-plus 图标）。
+                // 🔴 2026-11-22(六)：导入图标放大（22），保持 30 命中区。
                 Button { importSources() } label: {
-                    LucideIcon(icon: .listPlus, size: 18, color: AppStyle.accent)
-                        .frame(width: 26, height: 30)
+                    LucideIcon(icon: .listPlus, size: 22, color: AppStyle.accent)
+                        .frame(width: 30, height: 30)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -71,19 +77,10 @@ struct SourcePickerSheet: View {
                             await MainActor.run { isChecking = false }
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            // 🔴 2026-11-22(五)：检测按钮改用 list-restart 图标（列表+旋转箭头）。
-                            if isChecking {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                                    .frame(width: 15, height: 15)
-                            } else {
-                                LucideIcon(icon: .listRestart, size: 16, color: AppStyle.accent)
-                            }
-                            Text(isChecking ? "检测中" : "检测音源")
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                        .foregroundStyle(AppStyle.accent)
+                        // 🔴 2026-11-22(六)：按用户要求移除「检测音源」前的图标，只保留文字。
+                        Text(isChecking ? "检测中…" : "检测音源")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(AppStyle.accent)
                     }
                     .buttonStyle(.plain)
                     .disabled(isChecking)
@@ -94,7 +91,7 @@ struct SourcePickerSheet: View {
 
             // 列表：长按某行即可拖动排序（松手提交）
             ScrollView {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: rowSpacing) {
                     ForEach(Array(orderedIDs.enumerated()), id: \.element) { index, id in
                         sourceRow(id: id, index: index)
                     }
@@ -103,8 +100,12 @@ struct SourcePickerSheet: View {
                 .padding(.horizontal, 16)
             }
             .compatScrollContentBackground(.hidden)
-            // 🔴 高度贴合内容：行数 × 行高（最多给 6 行，再多交给面板整体高度）
-            .frame(height: min(CGFloat(max(1, store.sources.count)) * rowHeight + 8, rowHeight * 6 + 8))
+            // 🔴 高度贴合内容：行数×内容高 + (行数-1)×行间距，最多展示 6 行。
+            //    显式把间距算进高度，最后一行不再被挤压。
+            .frame(height: {
+                let n = min(max(1, store.sources.count), 6)
+                return CGFloat(n) * rowHeight + CGFloat(max(0, n - 1)) * rowSpacing + 8
+            }())
 
             // 🔴 导入结果提示（短暂显示，不占常驻高度）
             if let msg = importMessage {
@@ -153,6 +154,7 @@ struct SourcePickerSheet: View {
                 index: index,
                 totalCount: orderedIDs.count,
                 rowHeight: rowHeight,
+                dragStep: rowPitch,
                 showInsertLine: draggingID != nil && draggingID != id && insertionIndex == index,
                 onDragStart: { draggingID = $0; insertionIndex = index },
                 onDragMove: { insertionIndex = $0 },
@@ -257,6 +259,8 @@ private struct SourcePickerRowView: View {
     let index: Int
     let totalCount: Int
     let rowHeight: CGFloat
+    /// 拖动一行的距离标尺 = 行高 + 行间距（与视觉 pitch 一致，跨行换算才准）。
+    let dragStep: CGFloat
     let showInsertLine: Bool
     let onDragStart: (String) -> Void
     let onDragMove: (Int) -> Void
@@ -274,7 +278,7 @@ private struct SourcePickerRowView: View {
             sourceID: source.id,
             index: index,
             totalCount: totalCount,
-            rowHeight: rowHeight,
+            rowHeight: dragStep,
             onStart: { _ in
                 isDragging = true
                 dragOffset = 0
@@ -296,7 +300,10 @@ private struct SourcePickerRowView: View {
         ) {
             rowVisual
         }
+        // 🔴 2026-11-22(六)：fixedSize 保证每行（含最后一行）都拿到完整 rowHeight，
+        //    不被 ScrollView 底部可用空间压缩 —— 这是「最后一行贴太近」的根因。
         .frame(height: rowHeight)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// 行的视觉内容（不含拖动手势）：健康点 + 文案 + 开关 + 插入线 / 拖动位移反馈。

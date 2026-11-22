@@ -426,6 +426,29 @@ struct PlayerView: View {
         Haptics.light()
     }
 
+    /// 🔴 2026-11-22(六)：点歌手名进入歌手主页，与搜索/发现页同款 ArtistDetailView。
+    ///    多歌手（"A、B" / "A&B" / "A / B"）时取第一个，避免拼出来的 id 搜不到。
+    private func openArtistPage() {
+        guard let song = store.current else { return }
+        let name = Self.firstArtistName(song.artist)
+        guard !name.isEmpty else { return }
+        let artist = Artist(id: "kw:\(name)",
+                            name: name,
+                            coverURL: song.artworkURL)
+        ArtistPagePresenter.shared.present(artist: artist)
+        Haptics.light()
+    }
+
+    /// 从可能包含多位歌手的字符串里取第一位，兼容中文顿号 / & / 斜杠 / 逗号。
+    fileprivate static func firstArtistName(_ raw: String) -> String {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return "" }
+        let separators = CharacterSet(charactersIn: "、&,，/｜|／;；")
+        let parts = text.components(separatedBy: separators)
+        return parts.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }?
+            .trimmingCharacters(in: .whitespaces) ?? text
+    }
+
     /// 封面下方的信息区（对齐参考图）：大标题 → 歌手 + 音质/伴唱等徽标，全部左对齐。
     private var classicTitleBlock: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -440,12 +463,16 @@ struct PlayerView: View {
             // 🔴 v2.5.44：用户要求 —— 移除黄色「极高音质」标签、移除「专辑」标签、加入「VIP」标签。
             // 现在歌手名后面只保留两个：VIP（金色胶囊）+ 音质（白色半透明胶囊）。
             HStack(spacing: 6) {
-                Text(store.current?.artist ?? "未知歌手")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.78))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(1)
+                // 🔴 2026-11-22(六)：点歌手名进入歌手主页（UIKit present，穿过全屏播放页）。
+                Button { openArtistPage() } label: {
+                    Text(store.current?.artist ?? "未知歌手")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .layoutPriority(1)
+                }
+                .buttonStyle(.plain)
                 vipPill
                 // 🔴 2026-11-22：歌手名后面显示当前音源标签（如「酷狗音乐」「洛雪独家」）。
                 if !store.sourceName.isEmpty {
@@ -2171,7 +2198,8 @@ struct LyricsPageView: View {
                               showsTranslation: store.showTranslation,
                               playback: PlayerStore.shared.playback,
                               isPlaying: store.isPlaying,
-                              liveTime: { store.lyricDisplayTime })
+                              liveTime: { store.lyricDisplayTime },
+                              onSeek: { store.seek(to: $0) })
                     .frame(width: sz.width - 52)
                     .frame(maxHeight: .infinity)
                     .frame(maxWidth: .infinity)
@@ -2425,6 +2453,8 @@ private struct BigLyricsView: View {
     /// 🔴 2026-11-16：歌词字号（与「更多 → 歌词字号」共用同一个 AppStorage key）。
     ///    放在最后且带默认值，不改变既有成员初始化器的参数顺序。
     @AppStorage(LyricsFontScale.key) private var lyricsFontScale: Double = 1.0
+    /// 🔴 2026-11-22(六)：点击某行歌词 → 从该行时间点开始播放。默认 nil（不响应点击）。
+    var onSeek: ((Double) -> Void)? = nil
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -2522,6 +2552,14 @@ private struct BigLyricsView: View {
         }
         .lineSpacing(2)
         .frame(maxWidth: .infinity, alignment: .center)
+        // 🔴 2026-11-22(六)：点这一行 → 从该行时间开始播放（歌词页点行跳转）。
+        //    contentShape 扩大命中区到整行宽度，行间空白不属于本行。
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard let seek = onSeek else { return }
+            seek(line.time)
+            Haptics.light()
+        }
         .id(line.id)
     }
 }
@@ -3717,7 +3755,8 @@ struct KugouLyricsPage: View {
                                   showsTranslation: store.showTranslation,
                                   playback: PlayerStore.shared.playback,
                                   isPlaying: store.isPlaying,
-                                  liveTime: { store.lyricDisplayTime })
+                                  liveTime: { store.lyricDisplayTime },
+                                  onSeek: { store.seek(to: $0) })
                         .frame(width: sz.width - 52)
                         .frame(maxHeight: .infinity)
                         .frame(maxWidth: .infinity)
@@ -3899,10 +3938,14 @@ struct KugouLyricsPage: View {
                 .foregroundStyle(.white)
                 .lineLimit(1)
             HStack(spacing: 6) {
-                Text(store.current?.artist ?? "未知歌手")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.78))
-                    .lineLimit(1)
+                // 🔴 2026-11-22(六)：点歌手名进入歌手主页（UIKit present，穿过全屏歌词页）。
+                Button { openArtistPage() } label: {
+                    Text(store.current?.artist ?? "未知歌手")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
                 tag("VIP")
                 // 🔴 2026-11-18（二改）：音质标签改回显示音质名称，不再显示实测码率。
                 tag(SourceStore.shared.quality.title)
@@ -3918,6 +3961,18 @@ struct KugouLyricsPage: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// 🔴 2026-11-22(六)：歌词页点歌手名进入歌手主页（复用播放页的多歌手拆分规则）。
+    private func openArtistPage() {
+        guard let song = store.current else { return }
+        let name = PlayerView.firstArtistName(song.artist)
+        guard !name.isEmpty else { return }
+        let artist = Artist(id: "kw:\(name)",
+                            name: name,
+                            coverURL: song.artworkURL)
+        ArtistPagePresenter.shared.present(artist: artist)
+        Haptics.light()
     }
 
     private func tag(_ text: String) -> some View {
