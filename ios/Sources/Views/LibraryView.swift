@@ -1845,8 +1845,14 @@ private struct PlaylistFirstCover: View {
                 }
 
                 // 确定第一首：详情缓存优先，否则按需请求服务端第一页。
-                let first: Song? = cachedFirst ?? (try? await KugouClient.shared
-                    .playlistSongs(listid: playlist.id, firstPageOnly: true).first)
+                // ⚠️ try? await 不能放在 ?? 的 autoclosure 里，改显式分支。
+                let first: Song?
+                if let cachedFirst {
+                    first = cachedFirst
+                } else {
+                    first = try? await KugouClient.shared
+                        .playlistSongs(listid: playlist.id, firstPageOnly: true).first
+                }
                 Self.markChecked(playlist.id)
 
                 var newInfo = CoverInfo()
