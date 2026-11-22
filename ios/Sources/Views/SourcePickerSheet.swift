@@ -8,7 +8,7 @@ import SwiftUI
 ///    列表高度按音源行数自适应。深色模式跟随 App 主题（去掉强制浅色）。
 /// 🔴 2026-11-21（二）：右上角「排序」改成「检测音源」按钮（重新体检全部音源），
 ///    底部优先级说明按用户要求移除。
-/// 🔴 2026-11-22：顶栏加大；排序改成「长按行直接拖动」——不再要「排序/完成」按钮。
+/// 🔴 2026-11-22：排序改成「长按行直接拖动」——不再要「排序/完成」按钮；仅把顶栏行高度加大一点，其余尺寸沿用旧版。
 ///    实现要点：仅用本地 `orderedIDs` 保存顺序，行内容（开关/健康/名称）仍从 store
 ///    实时读取，避免拖动重排与开关状态互相覆盖；松手时一次性 `store.reorder`。
 struct SourcePickerSheet: View {
@@ -32,21 +32,21 @@ struct SourcePickerSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部拖拽指示条（点击也能关闭）
+            // 顶部拖拽指示条（点击也能关闭）——恢复旧版尺寸
             Button { onDismiss() } label: {
                 Capsule()
                     .fill(AppStyle.stroke)
-                    .frame(width: 40, height: 6)
+                    .frame(width: 38, height: 5)
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
 
-            // 顶栏（🔴 2026-11-22 加大：左右留白、上下高度、标题字号均加大）
+            // 顶栏：字号/间距沿用旧版，🔴 仅把这一行的高度加大一点（上下各 12pt）
             HStack {
                 Text("音源")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(AppStyle.primaryText)
                 Spacer(minLength: 8)
                 if !store.sources.isEmpty {
@@ -65,7 +65,7 @@ struct SourcePickerSheet: View {
                                     .frame(width: 13, height: 13)
                             }
                             Text(isChecking ? "检测中" : "检测音源")
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.system(size: 13, weight: .medium))
                         }
                         .foregroundStyle(AppStyle.accent)
                     }
@@ -73,8 +73,8 @@ struct SourcePickerSheet: View {
                     .disabled(isChecking)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
             // 列表：长按某行即可拖动排序（松手提交）
             ScrollView {
