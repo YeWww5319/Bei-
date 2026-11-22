@@ -99,8 +99,10 @@ enum Lucide: String, CaseIterable {
     case audioSourceBox  // 2026-11-22 动作行·音源（收件盒：圆角外框 + 顶部横条 + V 形收口）
     case soundSparkleBox  // 2026-11-22 动作行·音效（开口方框 + 大小两个四角星，Lucide square-sparkles）
     case circuitBoard  // 🔴 2026-11-22 动作行·音源（电路板：圆角方框 + 走线 + 两个触点，Lucide circuit-board）
-    case boxes  // 🔴 2026-11-22(三) 动作行·音源（三个立方体，Lucide boxes）
-    case star  // 🔴 2026-11-22(三) 动作行·音效（空心五角星，Lucide star）
+    case boxes  // 2026-11-22(三) 动作行·音源（三个立方体，Lucide boxes）— 已被 bug 取代，保留备用
+    case star  // 2026-11-22(三) 动作行·音效（空心五角星，Lucide star）— 已被 disc3 取代，保留备用
+    case bug  // 🔴 2026-11-22(四) 动作行·音源（甲虫/芯片造型，Lucide bug）按参考图
+    case disc3  // 🔴 2026-11-22(四) 动作行·音效（唱片：外圆+内圆+两条弧线，Lucide disc-3）按参考图
 
     /// 在给定 rect 内构造该图标的 Path（描边路径，未闭合填充由调用方决定）。
     func path(in rect: CGRect) -> Path {
@@ -1333,6 +1335,84 @@ enum Lucide: String, CaseIterable {
             p.addLine(to: g.p(8.936, 7.402))
             p.addLine(to: g.p(9.216, 6.974))
             p.closeSubpath()
+
+        case .bug:  // 音源·甲虫 — bug
+            p.move(to: g.p(12.000, 20.000))
+            p.addLine(to: g.p(12.000, 11.000))
+            p.move(to: g.p(14.000, 7.000))
+            p.addLine(to: g.p(15.236, 7.196))
+            p.addLine(to: g.p(16.351, 7.764))
+            p.addLine(to: g.p(17.236, 8.649))
+            p.addLine(to: g.p(17.804, 9.764))
+            p.addLine(to: g.p(18.000, 11.000))
+            p.addLine(to: g.p(18.000, 14.000))
+            p.addLine(to: g.p(17.638, 16.052))
+            p.addLine(to: g.p(16.596, 17.857))
+            p.addLine(to: g.p(15.000, 19.196))
+            p.addLine(to: g.p(13.042, 19.909))
+            p.addLine(to: g.p(10.958, 19.909))
+            p.addLine(to: g.p(9.000, 19.196))
+            p.addLine(to: g.p(7.404, 17.857))
+            p.addLine(to: g.p(6.362, 16.052))
+            p.addLine(to: g.p(6.000, 14.000))
+            p.addLine(to: g.p(6.000, 11.000))
+            p.addLine(to: g.p(6.196, 9.764))
+            p.addLine(to: g.p(6.764, 8.649))
+            p.addLine(to: g.p(7.649, 7.764))
+            p.addLine(to: g.p(8.764, 7.196))
+            p.addLine(to: g.p(10.000, 7.000))
+            p.move(to: g.p(14.120, 3.880))
+            p.addLine(to: g.p(16.000, 2.000))
+            p.move(to: g.p(21.000, 21.000))
+            p.addLine(to: g.p(20.817, 19.799))
+            p.addLine(to: g.p(20.282, 18.708))
+            p.addLine(to: g.p(19.444, 17.829))
+            p.addLine(to: g.p(18.381, 17.241))
+            p.addLine(to: g.p(17.190, 17.000))
+            p.move(to: g.p(21.000, 5.000))
+            p.addLine(to: g.p(20.830, 6.149))
+            p.addLine(to: g.p(20.337, 7.201))
+            p.addLine(to: g.p(19.563, 8.066))
+            p.addLine(to: g.p(18.573, 8.673))
+            p.addLine(to: g.p(17.450, 8.970))
+            p.move(to: g.p(22.000, 13.000))
+            p.addLine(to: g.p(18.000, 13.000))
+            p.move(to: g.p(3.000, 21.000))
+            p.addLine(to: g.p(3.183, 19.799))
+            p.addLine(to: g.p(3.718, 18.708))
+            p.addLine(to: g.p(4.556, 17.829))
+            p.addLine(to: g.p(5.619, 17.241))
+            p.addLine(to: g.p(6.810, 17.000))
+            p.move(to: g.p(3.000, 5.000))
+            p.addLine(to: g.p(3.170, 6.149))
+            p.addLine(to: g.p(3.663, 7.201))
+            p.addLine(to: g.p(4.437, 8.066))
+            p.addLine(to: g.p(5.427, 8.673))
+            p.addLine(to: g.p(6.550, 8.970))
+            p.move(to: g.p(6.000, 13.000))
+            p.addLine(to: g.p(2.000, 13.000))
+            p.move(to: g.p(8.000, 2.000))
+            p.addLine(to: g.p(9.880, 3.880))
+            p.move(to: g.p(9.000, 7.130))
+            p.addLine(to: g.p(9.000, 6.000))
+            p.addLine(to: g.p(9.181, 4.974))
+            p.addLine(to: g.p(9.702, 4.072))
+            p.addLine(to: g.p(10.500, 3.402))
+            p.addLine(to: g.p(11.479, 3.046))
+            p.addLine(to: g.p(12.521, 3.046))
+            p.addLine(to: g.p(13.500, 3.402))
+            p.addLine(to: g.p(14.298, 4.072))
+            p.addLine(to: g.p(14.819, 4.974))
+            p.addLine(to: g.p(15.000, 6.000))
+            p.addLine(to: g.p(15.000, 7.130))
+
+        case .disc3:  // 音效·唱片 — disc-3
+            p.move(to: g.p(6.000, 12.000))
+            p.addCurve(to: g.p(7.800, 7.800), control1: g.p(6.000, 10.300), control2: g.p(6.700, 8.800))
+            p.move(to: g.p(18.000, 12.000))
+            p.addCurve(to: g.p(16.200, 16.200), control1: g.p(18.000, 13.700), control2: g.p(17.300, 15.200))
+            p.addEllipse(in: g.e(12.000, 12.000, 10.000))
+            p.addEllipse(in: g.e(12.000, 12.000, 2.000))
 
         case .fileHeadphone:  // 音源 — file-headphone（文档折角 + 耳机）
             // 文档外框（左/顶/右/底 + 右上折角）

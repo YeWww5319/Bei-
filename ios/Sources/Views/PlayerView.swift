@@ -3907,6 +3907,10 @@ struct KugouLyricsPage: View {
                 tag("VIP")
                 // 🔴 2026-11-18（二改）：音质标签改回显示音质名称，不再显示实测码率。
                 tag(SourceStore.shared.quality.title)
+                // 🔴 2026-11-22(四)：歌词页也加音源标签（与播放页/迷你条一致，取前 4 字）。
+                if !store.sourceName.isEmpty {
+                    SourceTag(title: store.sourceName, textColor: .white.opacity(0.85))
+                }
                 if let current = store.current,
                    current.source == .local || DownloadManager.shared.item(for: current)?.isDone == true {
                     tag("本地")

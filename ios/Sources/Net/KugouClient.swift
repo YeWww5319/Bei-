@@ -2986,7 +2986,9 @@ final class KugouClient {
     // MARK: - 酷狗歌单详情（拉取歌单内歌曲）
 
     /// 根据 listid 拉取歌单内所有歌曲（分页 + 🔴 gateway.kugou.com 接口必须带 webSign）
-    func playlistSongs(listid: String) async throws -> [Song] {
+    /// - firstPageOnly: 🔴 2026-11-22(四) 歌单列表缩略图专用 —— 只拉第一页（少量），
+    ///   用来拿「第一首歌的封面」，避免为列表里几十个歌单都拉全量歌曲。
+    func playlistSongs(listid: String, firstPageOnly: Bool = false) async throws -> [Song] {
         guard KugouAuth.shared.isLoggedIn else { throw KugouError.parse("请先登录酷狗") }
         if KugouAuth.shared.dfid == "-" { await registerDevice() }
         let userId = KugouAuth.shared.userId
@@ -2994,8 +2996,9 @@ final class KugouClient {
 
         var allItems: [[String: Any]] = []
         var page = 1
-        let pageSize = 200
-        while page <= 50 {
+        let pageSize = firstPageOnly ? 10 : 200
+        let maxPage = firstPageOnly ? 1 : 50
+        while page <= maxPage {
             let clienttime = "\(Int(Date().timeIntervalSince1970))"
 
             // 🔴 appid/clientver 必须用 gateway 版（3116/11440）。

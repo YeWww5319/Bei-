@@ -154,6 +154,12 @@ final class LibraryStore: ObservableObject {
         return favoriteIDs.contains(song.id)
     }
 
+    /// 🔴 2026-11-22(四)：用户主动取消过收藏的歌 id。
+    ///    歌单详情页重新加载 / 后台补齐时用它过滤，避免已取消的歌从云端数据里「刷出来」。
+    func isExcludedFavorite(_ song: Song) -> Bool {
+        excludedFavoriteIDs.contains(song.id)
+    }
+
     /// 🔴 2026-11-15：酷狗云歌单「默认收藏」与本地收藏状态同步。
     ///
     ///    之前云端默认收藏（截图里 569 首）与本地 `favorites` 是两套互不相干的数据，

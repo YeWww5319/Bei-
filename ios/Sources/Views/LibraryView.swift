@@ -963,10 +963,9 @@ private struct KugouLibraryPage: View {
             KugouPlaylistDetail(listid: playlist.id, name: playlist.name, coverURL: playlist.coverURL)
         } label: {
             HStack(spacing: 12) {
-                // 🔴 之前硬编码 url: nil —— 歌单列表全是灰色占位块。
-                CoverImage(url: playlist.coverURL.flatMap { URL(string: $0) },
-                           fallbackKeys: ["kg-list:\(playlist.id)"],
-                           seed: playlist.name, size: 54, corner: 8)
+                // 🔴 2026-11-22(四)：封面优先用「歌单第一首歌」的专辑图，
+                //    没有（懒加载失败/空歌单）才退回歌单自带的封面。
+                PlaylistFirstCover(playlist: playlist)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(playlist.name)
                         .font(.system(size: 15, weight: .medium))
@@ -1516,8 +1515,16 @@ struct KugouPlaylistDetail: View {
         LibraryStore.shared.mergeFavorites(songs)
     }
 
+    /// 🔴 2026-11-22(四)：滤掉用户主动取消过收藏的歌。
+    ///    云端歌单 / 后台补齐可能把它们带回来，所有写入 songs / detailCache 的入口都要过这一层，
+    ///    否则「取消收藏」后下拉刷新或二次进页时又会刷出来（用户实测反馈）。
+    private func withoutExcludedFavorites(_ input: [Song]) -> [Song] {
+        let excluded = LibraryStore.shared
+        return input.filter { !excluded.isExcludedFavorite($0) }
+    }
+
     private func load() async {
-        let cached = Self.detailCache[listid] ?? []
+        let cached = withoutExcludedFavorites(Self.detailCache[listid] ?? [])
         if !cached.isEmpty {
             songs = cached
             isLoading = false
@@ -1536,7 +1543,7 @@ struct KugouPlaylistDetail: View {
             // 🔴 2026-11-08：用户要求歌单歌曲改成**倒叙**（后加入的歌排前面），
             //    所以先把服务端返回的整体反转，后面每一步（补齐快照 / 缓存）都必须
             //    沿用同一个倒序基准，不能有一环把顺序打回正序。
-            let reversed = Array(parsed.reversed())
+            let reversed = withoutExcludedFavorites(Array(parsed.reversed()))
             // 🔴 v2.8.2：二次进入/刷新时保留已补齐的歌手/封面，不把之前的反查成果打回占位
             let merged = mergePreservingEnriched(reversed)
             // 🔴 v2.9.5：刚存进来的歌排到第一位（其余保持上面的倒序）
@@ -1557,12 +1564,12 @@ struct KugouPlaylistDetail: View {
             Task { [merged] in
                 let throttle = BatchThrottle()
                 let final = await KugouClient.shared.enrichPlaylistSongs(merged) { snapshot in
-                    let snapped = KugouRecentAdditions.shared.ordered(snapshot, forListID: listid)
+                    let snapped = withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(snapshot, forListID: listid))
                     Self.detailCache[listid] = snapped
                     guard throttle.shouldFlush(interval: 1.2) else { return }
                     songs = snapped
                 }
-                let finalOrdered = KugouRecentAdditions.shared.ordered(final, forListID: listid)
+                let finalOrdered = withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(final, forListID: listid))
                 Self.detailCache[listid] = finalOrdered
                 Self.cacheTime[listid] = Date()
                 // 强制补最后一次（节流可能吞掉末尾批次）；保留补齐期间用户刚存进来的歌。
@@ -1752,4 +1759,70 @@ extension Notification.Name {
     /// 🔴 2026-11-22(三)：用户取消收藏了一首歌，object = song.id。
     ///    「默认收藏」歌单页收到后把该行从列表 + 详情缓存里移除（取消收藏 = 从默认收藏移除）。
     static let auroraFavoriteDidRemove = Notification.Name("aurora.favoriteDidRemove")
+}
+
+/// 🔴 2026-11-22(四)：歌单列表行封面 —— 优先显示「歌单第一首歌的专辑图」。
+///
+/// 列表本身只有歌单元数据（songs 为空），第一首封面要按需请求。设计要点：
+///  · 静态缓存 `coverCache`：一个歌单只请求一次，滚动来回不重复发请求；
+///  · 懒加载在 `.task` 里做，成功后主线程写 @State，失败静默回退歌单自带封面 / seed 占位；
+///  · 用 firstPageOnly 只拉第一页（10 首），拿第一首的 artworkURL，不拉全量。
+private struct PlaylistFirstCover: View {
+    let playlist: KugouClient.KugouPlaylist
+
+    /// listid → 第一首歌封面 URL（只存成功拿到的）。`checked` 记录已查过的歌单（含查了没封面的），
+    /// 二者配合保证一个歌单只发一次请求、滚动来回不重复。
+    private static var coverCache: [String: URL] = [:]
+    private static var checked: Set<String> = []
+    private static let lock = NSLock()
+
+    @State private var firstArtwork: URL?
+    @State private var loaded = false
+
+    private var resolvedURL: URL? {
+        if loaded { return firstArtwork ?? fallbackURL }
+        if let cached = Self.cached(playlist.id) { return cached }
+        return fallbackURL
+    }
+    private var fallbackURL: URL? { playlist.coverURL.flatMap { URL(string: $0) } }
+
+    var body: some View {
+        CoverImage(url: resolvedURL,
+                   fallbackKeys: ["kg-list:\(playlist.id)"],
+                   seed: playlist.name, size: 54, corner: 8)
+            .task(id: playlist.id) {
+                if Self.cached(playlist.id) != nil || Self.isChecked(playlist.id) {
+                    let cached = Self.cached(playlist.id)
+                    await MainActor.run { firstArtwork = cached; loaded = true }
+                    return
+                }
+                // 先标记已查，避免同一歌单多行同时发请求。
+                Self.markChecked(playlist.id)
+                let cover = try? await KugouClient.shared
+                    .playlistSongs(listid: playlist.id, firstPageOnly: true)
+                    .first?.artworkURL
+                if let cover { Self.store(playlist.id, cover: cover) }
+                await MainActor.run {
+                    firstArtwork = cover
+                    loaded = true
+                }
+            }
+    }
+
+    private static func cached(_ id: String) -> URL? {
+        lock.lock(); defer { lock.unlock() }
+        return coverCache[id]
+    }
+    private static func isChecked(_ id: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return checked.contains(id)
+    }
+    private static func markChecked(_ id: String) {
+        lock.lock(); defer { lock.unlock() }
+        checked.insert(id)
+    }
+    private static func store(_ id: String, cover: URL) {
+        lock.lock(); defer { lock.unlock() }
+        coverCache[id] = cover
+    }
 }
