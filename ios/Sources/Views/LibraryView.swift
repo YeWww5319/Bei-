@@ -1859,7 +1859,7 @@ private struct PlaylistFirstCover: View {
                         ?? CoverResolver.shared.firstAvailable(first.coverFallbackKeys)
                         ?? (await CoverResolver.shared.resolveCover(for: first.coverFallbackKeys))
                 }
-                Self.store(playlist.id, newInfo)
+                Self.store(playlist.id, info: newInfo)
                 await MainActor.run { info = newInfo; loaded = true }
             }
     }
