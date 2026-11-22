@@ -1118,8 +1118,11 @@ struct KugouPlaylistDetail: View {
         PlaylistSortMemo.shared.index(songs: displaySongs, mode: sortMode, listKey: sortListKey)
     }
 
-    /// 歌单自己的封面；没有就用第一首歌的封面放大（歌曲是异步加载的，靠 heroKey 刷新浮层）。
+    /// 🔴 2026-11-22(三)：封面优先用【列表第一首歌】的专辑图（与发现页榜单同款），
+    ///    没有才退回歌单自己的封面。用户反馈「默认收藏」头图是书法封面、跟第一首歌对不上。
+    ///    歌曲异步加载/排序变化会改 heroKey 刷新浮层。
     private var heroURL: URL? {
+        if let first = displaySongs.first?.artworkURL { return first }
         if let coverURL, let url = URL(string: coverURL) { return url }
         return songs.first?.artworkURL
     }
@@ -1148,6 +1151,19 @@ struct KugouPlaylistDetail: View {
         .compatToolbarDynamicScheme(dark: headerState.navUsesDarkChrome)
         .kugouNavigationBarBackground(.clear, transparent: true)
         .task { await load() }
+        // 🔴 2026-11-22(三)：在「默认收藏」页取消收藏 → 把这首歌从列表 + 详情缓存移除，
+        //    否则云端已移除、本地列表却还显示，用户以为「取消收藏没生效」。
+        .onReceive(NotificationCenter.default.publisher(for: .auroraFavoriteDidRemove)) { note in
+            guard name == "默认收藏", let removedID = note.object as? String else { return }
+            withAnimation(.easeOut(duration: 0.2)) {
+                songs.removeAll { $0.id == removedID }
+            }
+            // 同步进详情缓存，退出再进不再出现
+            if var cached = Self.detailCache[listid] {
+                cached.removeAll { $0.id == removedID }
+                Self.detailCache[listid] = cached
+            }
+        }
         .sheet(isPresented: $showKugouPicker) {
             KugouPlaylistPicker(songs: songs, title: "加入我的酷狗歌单")
         }
@@ -1733,4 +1749,7 @@ extension Notification.Name {
     /// 🔴 2026-11-12：在歌单详情页用吸顶行的「新建歌单」按钮创建了云歌单，
     ///    曲库页收到后强制重拉，回到列表就能立刻看到新歌单。
     static let auroraKugouPlaylistChanged = Notification.Name("aurora.kugouPlaylistChanged")
+    /// 🔴 2026-11-22(三)：用户取消收藏了一首歌，object = song.id。
+    ///    「默认收藏」歌单页收到后把该行从列表 + 详情缓存里移除（取消收藏 = 从默认收藏移除）。
+    static let auroraFavoriteDidRemove = Notification.Name("aurora.favoriteDidRemove")
 }

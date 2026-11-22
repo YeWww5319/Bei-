@@ -185,6 +185,8 @@ final class LibraryStore: ObservableObject {
             persist(Array(excludedFavoriteIDs), key: key("favExcluded"))
             persist(favorites, key: key("favorites"))
             KugouFavoriteSync.shared.songUnfavorited(song)
+            // 🔴 2026-11-22(三)：通知「默认收藏」歌单页把这一行从列表 + 缓存移除。
+            NotificationCenter.default.post(name: .auroraFavoriteDidRemove, object: song.id)
             return false
         }
         // 🔴 2026-11-22：未登录不允许点亮收藏，直接拉起扫码登录（全局监听在 RootView）。

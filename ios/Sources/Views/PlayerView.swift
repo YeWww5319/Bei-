@@ -3831,10 +3831,13 @@ struct KugouLyricsPage: View {
                     .clipped()
                     .opacity(0.85)
             }
+            // 🔴 2026-11-22(三)：末段原用 palette.near —— 它是取色的【互补色】(h+180)，
+            //    蓝色封面 → 黄棕色 → 底部和上面两种颜色、很丑（用户截图实锤）。
+            //    改成同色系 palette.dark，整页只用一个色相、由浅到深自然过渡。
             LinearGradient(colors: [palette.light.opacity(0.38),
                                     palette.main.opacity(0.56),
                                     palette.dark.opacity(0.82),
-                                    palette.near.opacity(0.94)],
+                                    palette.dark.opacity(0.94)],
                            startPoint: .top, endPoint: .bottom)
             // 底部再压一层暗，保证白色歌词在任何封面色上都有足够对比度。
             LinearGradient(colors: [.clear, .clear,

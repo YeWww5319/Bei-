@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 2026-11-20：播放器动作行「音源」按钮弹出的半屏音源面板。
 ///
@@ -11,6 +12,9 @@ import SwiftUI
 /// 🔴 2026-11-22：排序改成「长按行直接拖动」——不再要「排序/完成」按钮；仅把顶栏行高度加大一点，其余尺寸沿用旧版。
 /// 🔴 2026-11-22（二）：修左右边距（ScrollView 无 List 自带 inset）；
 ///    拖动状态拆到每行独立视图 → 每帧只有被拖的那行重算，父视图只在跨行时更新插入线，根治卡顿。
+/// 🔴 2026-11-22（三）：移除三横图标；整行长按拖动改用 UIKit 识别器 ——
+///    长按 0.35s 才激活拖动（未激活前 ScrollView 正常滚动、开关正常点击），
+///    激活后临时禁用父 ScrollView 的 pan，松手恢复。纯 SwiftUI gesture 无法同时兼顾三者。
 struct SourcePickerSheet: View {
     @ObservedObject private var store = SourceStore.shared
     @State private var isChecking = false
@@ -158,8 +162,8 @@ struct SourcePickerSheet: View {
 
 /// 单个音源行：把拖动状态（dragOffset / isDragging）放在这里，
 /// 每帧拖动只重算这一行；父视图只在跨行时收到一次 `onDragMove`。
-/// 🔴 2026-11-22（三）：拖动手势只挂在左侧「把手」上，不再吞整行的触摸 ——
-///    否则滚动列表和点开关都被手势抢走（用户反馈「不能上滑、开关点不动」）。
+/// 🔴 2026-11-22（三）：三横图标已移除。整行长按拖动交给 `LongPressReorderRow`
+///    （UIKit 识别器），未长按时滚动 / 开关点击完全不受影响。
 private struct SourcePickerRowView: View {
     let source: ThirdPartySource
     let index: Int
@@ -178,9 +182,38 @@ private struct SourcePickerRowView: View {
     @State private var reportedTarget = -1
 
     var body: some View {
+        LongPressReorderRow(
+            sourceID: source.id,
+            index: index,
+            totalCount: totalCount,
+            rowHeight: rowHeight,
+            onStart: { _ in
+                isDragging = true
+                dragOffset = 0
+                reportedTarget = index
+                onDragStart(source.id)
+            },
+            onMove: { target in
+                if target != reportedTarget {
+                    reportedTarget = target
+                    onDragMove(target)
+                }
+            },
+            onEnd: {
+                isDragging = false
+                dragOffset = 0
+                onDragEnd()
+            },
+            dragOffset: $dragOffset
+        ) {
+            rowVisual
+        }
+        .frame(height: rowHeight)
+    }
+
+    /// 行的视觉内容（不含拖动手势）：健康点 + 文案 + 开关 + 插入线 / 拖动位移反馈。
+    private var rowVisual: some View {
         HStack(spacing: 10) {
-            // 🔴 拖拽把手：只有这一小块区域挂长按手势，不吞列表滚动 / 开关点击。
-            dragHandle
             healthDot
             VStack(alignment: .leading, spacing: 3) {
                 Text(source.isBundled ? "默认音源" : source.name)
@@ -219,51 +252,6 @@ private struct SourcePickerRowView: View {
         .zIndex(isDragging ? 10 : 0)
     }
 
-    /// 左侧拖拽把手（三条横线），长按 0.25s 进入拖动。
-    /// 手势只作用在这 24pt 宽的区域，列表其余部分照常滚动 / 点开关。
-    private var dragHandle: some View {
-        VStack(spacing: 3) {
-            ForEach(0..<3) { _ in
-                Capsule()
-                    .fill(AppStyle.tertiaryText.opacity(0.55))
-                    .frame(width: 14, height: 2)
-            }
-        }
-        .frame(width: 24, height: 40)
-        .contentShape(Rectangle())
-        .gesture(
-            LongPressGesture(minimumDuration: 0.25)
-                .sequenced(before: DragGesture(minimumDistance: 0))
-                .onChanged { value in
-                    switch value {
-                    case .first(true):
-                        isDragging = true
-                        dragOffset = 0
-                        reportedTarget = index
-                        onDragStart(source.id)
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    case .second(true, let drag):
-                        guard let drag = drag else { return }
-                        dragOffset = drag.translation.height
-                        let steps = Int((dragOffset / rowHeight).rounded())
-                        let target = min(max(index + steps, 0), max(totalCount - 1, 0))
-                        if target != reportedTarget {
-                            reportedTarget = target
-                            onDragMove(target)
-                        }
-                    default:
-                        break
-                    }
-                }
-                .onEnded { _ in
-                    guard isDragging else { return }
-                    isDragging = false
-                    dragOffset = 0
-                    onDragEnd()
-                }
-        )
-    }
-
     @ViewBuilder
     private var healthDot: some View {
         switch health.status(for: source.id) {
@@ -284,5 +272,149 @@ private struct SourcePickerRowView: View {
         if source.isScript { return "JS 脚本 · \(supportText)" }
         let host = URL(string: source.template)?.host ?? "地址无效"
         return "\(host) · \(supportText)"
+    }
+}
+
+/// 🔴 2026-11-22（三）：整行长按拖动识别器。
+///
+/// 为什么不用纯 SwiftUI gesture：
+///  · 整行挂 `.gesture(LongPress+Drag)` 会吞掉 ScrollView 滚动和开关点击（用户实测「不能上滑、开关点不动」）；
+///  · 只挂 24pt 小把手则用户按不到、长按排序「不起作用」。
+/// 改用 UIKit `UILongPressGestureRecognizer` 包住整行：
+///  · minimumPressDuration 0.35s → 手指停住才激活；滑动列表时长按直接 failed，滚动照常；
+///  · `shouldRecognizeSimultaneouslyWith` 允许与 ScrollView pan 共存，激活瞬间禁用其 pan，
+///    松手恢复 → 拖动期间列表不会跟着滚；
+///  · `shouldReceive touch` 排除 UIControl（开关），开关点击独立生效。
+private struct LongPressReorderRow<Content: View>: UIViewControllerRepresentable {
+    let sourceID: String
+    let index: Int
+    let totalCount: Int
+    let rowHeight: CGFloat
+    let content: Content
+    let onStart: (String) -> Void
+    let onMove: (Int) -> Void
+    let onEnd: () -> Void
+    @Binding var dragOffset: CGFloat
+
+    init(
+        sourceID: String,
+        index: Int,
+        totalCount: Int,
+        rowHeight: CGFloat,
+        onStart: @escaping (String) -> Void,
+        onMove: @escaping (Int) -> Void,
+        onEnd: @escaping () -> Void,
+        dragOffset: Binding<CGFloat>,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.sourceID = sourceID
+        self.index = index
+        self.totalCount = totalCount
+        self.rowHeight = rowHeight
+        self.onStart = onStart
+        self.onMove = onMove
+        self.onEnd = onEnd
+        self._dragOffset = dragOffset
+        self.content = content()
+    }
+
+    func makeUIViewController(context: Context) -> UIHostingController<Content> {
+        let host = UIHostingController(rootView: content)
+        host.view.backgroundColor = .clear
+        host.view.isOpaque = false
+        let lp = UILongPressGestureRecognizer(target: context.coordinator,
+                                              action: #selector(Coordinator.handle(_:)))
+        lp.minimumPressDuration = 0.35
+        lp.allowableMovement = 10
+        lp.delegate = context.coordinator
+        host.view.addGestureRecognizer(lp)
+        return host
+    }
+
+    func updateUIViewController(_ host: UIHostingController<Content>, context: Context) {
+        host.rootView = content
+        let c = context.coordinator
+        c.sourceID = sourceID
+        c.index = index
+        c.totalCount = totalCount
+        c.rowHeight = rowHeight
+        c.onStart = onStart
+        c.onMove = onMove
+        c.onEnd = onEnd
+        c.dragOffset = $dragOffset
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var sourceID = ""
+        var index = 0
+        var totalCount = 0
+        var rowHeight: CGFloat = 60
+        var onStart: ((String) -> Void)?
+        var onMove: ((Int) -> Void)?
+        var onEnd: (() -> Void)?
+        var dragOffset: Binding<CGFloat>?
+
+        private var startY: CGFloat = 0
+        private var target = -1
+        private var active = false
+
+        @objc func handle(_ g: UILongPressGestureRecognizer) {
+            switch g.state {
+            case .began:
+                active = true
+                startY = g.location(in: g.view).y
+                target = index
+                Self.setScrollPan(enabled: false, for: g.view)
+                onStart?(sourceID)
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            case .changed:
+                guard active, let view = g.view else { return }
+                let dy = g.location(in: view).y - startY
+                dragOffset?.wrappedValue = dy
+                let steps = Int((dy / rowHeight).rounded())
+                let t = min(max(index + steps, 0), max(totalCount - 1, 0))
+                if t != target {
+                    target = t
+                    onMove?(t)
+                }
+            case .ended, .cancelled, .failed:
+                guard active else { return }
+                active = false
+                Self.setScrollPan(enabled: true, for: g.view)
+                onEnd?()
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        /// 开关（UISwitch）等 UIControl 区域不触发长按，保证点击独立生效。
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldReceive touch: UITouch) -> Bool {
+            var view: UIView? = touch.view
+            while let cur = view {
+                if cur is UIControl { return false }
+                view = cur.superview
+            }
+            return true
+        }
+
+        /// 激活拖动时临时关掉父 ScrollView 的 pan，松手恢复 —— 拖动不会带着列表滚动。
+        private static func setScrollPan(enabled: Bool, for view: UIView?) {
+            var v: UIView? = view?.superview
+            while let cur = v {
+                if let scroll = cur as? UIScrollView {
+                    scroll.panGestureRecognizer.isEnabled = enabled
+                    return
+                }
+                v = cur.superview
+            }
+        }
     }
 }

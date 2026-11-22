@@ -15,8 +15,8 @@ enum PlayerActionGlyph {
     case translate  // 翻译（「文」字骨架）
     case more       // 更多（三个实心圆点，竖排）
     case downloaded // 已下载（同款下载外框，角标「已下载」）
-    case soundEffect // 音效（开口方框 + 大小四角星，Lucide square-sparkles）— 2026-11-22 按参考图
-    case source     // 音源（收件盒：圆角外框 + 顶部横条 + V 形收口）— 2026-11-22 按参考图
+    case soundEffect // 音效（空心五角星，Lucide star）— 2026-11-22(三) 按参考图
+    case source     // 音源（三个立方体，Lucide boxes）— 2026-11-22(三) 按参考图
 }
 
 /// 统一规格的动作图标：24×24 画布坐标 → 实际 size，线宽随 size 等比缩放。
@@ -64,8 +64,8 @@ struct PlayerActionIcon: View {
                     QualityRings().stroke(tint, style: stroke)
                 }
             case .soundEffect:
-                // 🔴 2026-11-22：按参考图改成开口方框 + 大小四角星（square-sparkles），去掉 OFF/ON 角标。
-                LucideIcon(icon: .soundSparkleBox, size: size, color: tint)
+                // 🔴 2026-11-22(三)：按参考图改成空心五角星（Lucide star）。
+                LucideIcon(icon: .star, size: size, color: tint)
             case .lyric:
                 // 大圆角正方形外框 + 中间「词」字（参考图 6ccb467 同款）
                 ZStack {
@@ -90,8 +90,8 @@ struct PlayerActionIcon: View {
                         .offset(x: size * 0.22, y: size * 0.22)
                 }
             case .source:
-                // 🔴 2026-11-22（二）：音源按钮按最新参考图换成 circuit-board（电路板）。
-                LucideIcon(icon: .circuitBoard, size: size, color: tint)
+                // 🔴 2026-11-22(三)：音源按钮按最新参考图换成 boxes（三个立方体）。
+                LucideIcon(icon: .boxes, size: size, color: tint)
             }
         }
         .frame(width: size, height: size)
