@@ -15,8 +15,8 @@ enum PlayerActionGlyph {
     case translate  // 翻译（「文」字骨架）
     case more       // 更多（三个实心圆点，竖排）
     case downloaded // 已下载（同款下载外框，角标「已下载」）
-    case soundEffect // 音效（Lucide sliders-horizontal：三条横线 + 滑块）
-    case source     // 音源（文档折角 + 耳机 file-headphone）— 2026-11-21 按参考图
+    case soundEffect // 音效（开口方框 + 大小四角星，Lucide square-sparkles）— 2026-11-22 按参考图
+    case source     // 音源（收件盒：圆角外框 + 顶部横条 + V 形收口）— 2026-11-22 按参考图
 }
 
 /// 统一规格的动作图标：24×24 画布坐标 → 实际 size，线宽随 size 等比缩放。
@@ -64,8 +64,8 @@ struct PlayerActionIcon: View {
                     QualityRings().stroke(tint, style: stroke)
                 }
             case .soundEffect:
-                // 🔴 2026-11-20：按用户给的参考图改成 Lucide sliders-horizontal，去掉 OFF/ON 角标。
-                LucideIcon(icon: .slidersHorizontal, size: size, color: tint)
+                // 🔴 2026-11-22：按参考图改成开口方框 + 大小四角星（square-sparkles），去掉 OFF/ON 角标。
+                LucideIcon(icon: .soundSparkleBox, size: size, color: tint)
             case .lyric:
                 // 大圆角正方形外框 + 中间「词」字（参考图 6ccb467 同款）
                 ZStack {
@@ -90,8 +90,8 @@ struct PlayerActionIcon: View {
                         .offset(x: size * 0.22, y: size * 0.22)
                 }
             case .source:
-                // 🔴 2026-11-21：音源按钮按参考图换成 file-headphone（文档折角 + 耳机）。
-                LucideIcon(icon: .fileHeadphone, size: size, color: tint)
+                // 🔴 2026-11-22：音源按钮按参考图换成收件盒（圆角外框 + 顶部横条 + V 形收口）。
+                LucideIcon(icon: .audioSourceBox, size: size, color: tint)
             }
         }
         .frame(width: size, height: size)

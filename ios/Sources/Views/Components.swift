@@ -1517,6 +1517,25 @@ struct LocalTag: View {
     }
 }
 
+/// 🔴 2026-11-22：音源标签 —— 歌手名后面 / 迷你条里显示当前音源名。
+/// 与 LocalTag / QualityTag 同款灰白小胶囊；单独成视图，避免污染 PlayerView 类型检查。
+struct SourceTag: View {
+    var title: String
+    var textColor: Color = AppStyle.secondaryText
+    var body: some View {
+        Text(title)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(textColor)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 72)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(textColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
 /// 统一音质标签：默认与迷你播放器一致（蓝字 + 淡蓝半透明底，小圆角、无图标、无边框）。
 /// - tint：可覆盖主色（如迷你播放器音质标签要黄色时传 .yellow）。
 struct QualityTag: View {

@@ -22,6 +22,37 @@ final class KugouFavoriteSync {
         }
     }
 
+    /// 🔴 2026-11-22：取消收藏了一首歌 —— 从酷狗「默认收藏」歌单移除（fire-and-forget）。
+    /// 只移本地能拿到 fileid 的歌（歌单里解析出来的）， fire-and-forget：失败只记日志。
+    func songUnfavorited(_ song: Song) {
+        guard KugouAuth.shared.isLoggedIn else { return }
+        Task { [weak self] in
+            await self?.remove([song])
+        }
+    }
+
+    /// 从默认收藏歌单移除（与 add 对称）。
+    private func remove(_ songs: [Song]) async {
+        do {
+            let listid = try await defaultFavoriteListID()
+            guard !listid.isEmpty else { return }
+            var ok = 0
+            for song in songs where !song.kugouFileID.isEmpty {
+                do {
+                    try await KugouClient.shared.removeSongFromPlaylist(listid, song: song)
+                    ok += 1
+                } catch {
+                    Log.error("酷狗", "同步取消收藏《\(song.cleanTitle)》失败：\(error.localizedDescription)")
+                }
+            }
+            if ok > 0 {
+                Log.info("酷狗", "已从酷狗「默认收藏」移除 \(ok)/\(songs.count) 首")
+            }
+        } catch {
+            Log.error("酷狗", "同步取消收藏失败：\(error.localizedDescription)")
+        }
+    }
+
     /// 收藏了一张专辑：搜出专辑里的歌，一并存进「默认收藏」。
     func albumFavorited(_ album: Album) {
         guard KugouAuth.shared.isLoggedIn else { return }

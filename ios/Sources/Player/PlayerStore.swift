@@ -1150,8 +1150,11 @@ final class PlayerStore: ObservableObject {
 
     func toggleFavorite() {
         guard let song = current else { return }
-        isLiked = LibraryStore.shared.toggleFavorite(song)
-        Haptics.light()
+        let wasLiked = isLiked
+        let nowLiked = LibraryStore.shared.toggleFavorite(song)
+        isLiked = nowLiked
+        // 未登录点收藏时 LibraryStore 会拉起登录且状态不变，此时不给"切换成功"的震动反馈
+        if nowLiked != wasLiked { Haptics.light() }
     }
 
     // MARK: - 睡眠定时

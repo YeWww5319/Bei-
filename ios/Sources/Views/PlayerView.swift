@@ -447,6 +447,10 @@ struct PlayerView: View {
                     .truncationMode(.tail)
                     .layoutPriority(1)
                 vipPill
+                // 🔴 2026-11-22：歌手名后面显示当前音源标签（如「酷狗音乐」「洛雪独家」）。
+                if !store.sourceName.isEmpty {
+                    SourceTag(title: store.sourceName, textColor: .white.opacity(0.85))
+                }
                 // 🔴 3.0.0：已下载的歌曲在歌手名后面补一个「本地」标签，
                 //    与 VIP / 音质胶囊同一套白色半透明视觉。
                 if let current = store.current,

@@ -324,6 +324,10 @@ struct MiniPlayer: View {
                         .layoutPriority(1)
                     // 🔴 用户要求：迷你条 VIP 标签文字改灰白、跟歌手名同色（secondaryText）。
                     VIPTag(textColor: AppStyle.secondaryText)
+                    // 🔴 2026-11-22：迷你条也显示当前音源标签（跟歌手名同色）。
+                    if !mini.sourceName.isEmpty {
+                        SourceTag(title: mini.sourceName, textColor: AppStyle.secondaryText)
+                    }
                     // 🔴 3.0.0：已下载的歌曲在歌手名后面补「本地」标签，与 VIP / 音质标签同色。
                     if let song = mini.song,
                        song.source == .local || downloads.item(for: song)?.isDone == true {

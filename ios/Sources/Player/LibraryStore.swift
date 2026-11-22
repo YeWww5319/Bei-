@@ -179,11 +179,19 @@ final class LibraryStore: ObservableObject {
     @discardableResult
     func toggleFavorite(_ song: Song) -> Bool {
         if let index = favorites.firstIndex(where: { $0.id == song.id }) {
+            // 取消收藏：本地移除 + 从酷狗「默认收藏」歌单移除（fire-and-forget）
             favorites.remove(at: index)
             excludedFavoriteIDs.insert(song.id)
             persist(Array(excludedFavoriteIDs), key: key("favExcluded"))
             persist(favorites, key: key("favorites"))
+            KugouFavoriteSync.shared.songUnfavorited(song)
             return false
+        }
+        // 🔴 2026-11-22：未登录不允许点亮收藏，直接拉起扫码登录（全局监听在 RootView）。
+        //    避免「没登录也能收藏」—— 收藏要跟酷狗账号的默认收藏歌单同步，必须先登录。
+        guard KugouAuth.shared.isLoggedIn else {
+            NotificationCenter.default.post(name: .auroraShowKugouLogin, object: nil)
+            return isFavorite(song)  // 保持原状态（此处必为 false）
         }
         favorites.insert(song, at: 0)
         excludedFavoriteIDs.remove(song.id)

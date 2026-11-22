@@ -108,16 +108,16 @@ struct LockScreenView: View {
                     .buttonStyle(.plain)
                     .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                    // 🔴 2026-11-20：恢复 QQ 群获取授权码入口（群号换新：146570002）
+                    // 🔴 2026-11-22：QQ 群获取授权码入口（群号换新：1124217335）
                     VStack(spacing: 10) {
                         Button {
-                            UIPasteboard.general.string = "146570002"
+                            UIPasteboard.general.string = "1124217335"
                             Haptics.light()
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "person.2.fill")
                                     .font(.system(size: 12))
-                                Text("加 QQ 群 146570002 获取授权码")
+                                Text("加 QQ 群 1124217335 获取授权码")
                                     .font(.system(size: 13, weight: .medium))
                                 Image(systemName: "doc.on.doc")
                                     .font(.system(size: 11))

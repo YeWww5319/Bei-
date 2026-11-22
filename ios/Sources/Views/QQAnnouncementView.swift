@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// 🔴 2026-11-20：恢复 QQ 群邀请页（群号换新：146570002）。
-/// 从设置页「加入 QQ 交流群」入口打开；一键复制群号。
+/// QQ 群邀请页（群号：1124217335）。🔴 2026-11-22 设置页入口已移除，此类暂留备用。
+/// 一键复制群号。
 struct QQAnnouncementView: View {
     @Environment(\.dismiss) private var dismiss
-    static let groupNumber = "146570002"
+    static let groupNumber = "1124217335"
 
     var body: some View {
         ZStack {

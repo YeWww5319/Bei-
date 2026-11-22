@@ -96,6 +96,8 @@ enum Lucide: String, CaseIterable {
     case listMusic  // 更多菜单·加入播放列表（列表+音符）
     case slidersHorizontal  // 动作行·音效（三条横线 + 滑块，Lucide sliders-horizontal）
     case fileHeadphone  // 动作行·音源（文档折角 + 耳机，Lucide file-headphone）
+    case audioSourceBox  // 🔴 2026-11-22 动作行·音源（收件盒：圆角外框 + 顶部横条 + V 形收口）
+    case soundSparkleBox  // 🔴 2026-11-22 动作行·音效（开口方框 + 大小两个四角星，Lucide square-sparkles）
 
     /// 在给定 rect 内构造该图标的 Path（描边路径，未闭合填充由调用方决定）。
     func path(in rect: CGRect) -> Path {
@@ -1114,6 +1116,50 @@ enum Lucide: String, CaseIterable {
             p.move(to: g.p(12.000, 19.000)); p.addLine(to: g.p(3.000, 19.000))
             p.move(to: g.p(21.000, 19.000)); p.addLine(to: g.p(16.000, 19.000))
             p.move(to: g.p(16.000, 17.000)); p.addLine(to: g.p(16.000, 21.000))
+
+        case .audioSourceBox:  // 🔴 2026-11-22 音源 — 收件盒（圆角外框 + 顶部横条 + V 形收口）
+            // 圆角外框 x:3..21 y:4..20，圆角 r≈2.4
+            p.move(to: g.p(5.4, 4.0))
+            p.addLine(to: g.p(18.6, 4.0))
+            p.addCurve(to: g.p(21.0, 6.4), control1: g.p(19.9, 4.0), control2: g.p(21.0, 5.1))
+            p.addLine(to: g.p(21.0, 17.6))
+            p.addCurve(to: g.p(18.6, 20.0), control1: g.p(21.0, 18.9), control2: g.p(19.9, 20.0))
+            p.addLine(to: g.p(5.4, 20.0))
+            p.addCurve(to: g.p(3.0, 17.6), control1: g.p(4.1, 20.0), control2: g.p(3.0, 18.9))
+            p.addLine(to: g.p(3.0, 6.4))
+            p.addCurve(to: g.p(5.4, 4.0), control1: g.p(3.0, 5.1), control2: g.p(4.1, 4.0))
+            // 顶部横条（把上沿分出一条细带）
+            p.move(to: g.p(3.0, 8.6)); p.addLine(to: g.p(21.0, 8.6))
+            // V 形收口：从左右两侧下探到中间（参考图的信封口）
+            p.move(to: g.p(3.0, 10.6))
+            p.addLine(to: g.p(8.5, 10.6))
+            p.addCurve(to: g.p(12.0, 14.2), control1: g.p(10.0, 10.6), control2: g.p(10.6, 14.2))
+            p.addCurve(to: g.p(15.5, 10.6), control1: g.p(13.4, 14.2), control2: g.p(14.0, 10.6))
+            p.addLine(to: g.p(21.0, 10.6))
+
+        case .soundSparkleBox:  // 🔴 2026-11-22 音效 — 开口方框 + 大小两个四角星（Lucide square-sparkles）
+            // 开口方框：右边从上往下、绕底部到左边、顶边只到 x≈11（右上留口给大星）
+            p.move(to: g.p(21.0, 13.0))
+            p.addLine(to: g.p(21.0, 19.0))
+            p.addCurve(to: g.p(19.0, 21.0), control1: g.p(21.0, 20.1), control2: g.p(20.1, 21.0))
+            p.addLine(to: g.p(5.0, 21.0))
+            p.addCurve(to: g.p(3.0, 19.0), control1: g.p(3.9, 21.0), control2: g.p(3.0, 20.1))
+            p.addLine(to: g.p(3.0, 5.0))
+            p.addCurve(to: g.p(5.0, 3.0), control1: g.p(3.0, 3.9), control2: g.p(3.9, 3.0))
+            p.addLine(to: g.p(11.0, 3.0))
+            // 左下小短线
+            p.move(to: g.p(9.0, 13.0)); p.addLine(to: g.p(9.0, 17.0))
+            p.move(to: g.p(11.0, 15.0)); p.addLine(to: g.p(7.0, 15.0))
+            // 大四角星（右上）：中心≈(16,8)，四尖上下左右，凹处用二次曲线
+            p.move(to: g.p(16.0, 2.6))
+            p.addCurve(to: g.p(17.0, 6.9), control1: g.p(16.4, 5.0), control2: g.p(15.9, 6.4))
+            p.addCurve(to: g.p(21.3, 8.0), control1: g.p(18.2, 7.2), control2: g.p(20.3, 7.6))
+            p.addCurve(to: g.p(17.0, 9.1), control1: g.p(20.3, 8.4), control2: g.p(18.2, 8.8))
+            p.addCurve(to: g.p(16.0, 13.4), control1: g.p(15.9, 11.6), control2: g.p(16.4, 13.0))
+            p.addCurve(to: g.p(15.0, 9.1), control1: g.p(15.6, 13.0), control2: g.p(14.1, 11.6))
+            p.addCurve(to: g.p(10.7, 8.0), control1: g.p(11.8, 8.8), control2: g.p(9.7, 8.4))
+            p.addCurve(to: g.p(15.0, 6.9), control1: g.p(9.7, 7.6), control2: g.p(11.8, 7.2))
+            p.addCurve(to: g.p(16.0, 2.6), control1: g.p(14.1, 6.4), control2: g.p(15.6, 5.0))
 
         case .fileHeadphone:  // 音源 — file-headphone（文档折角 + 耳机）
             // 文档外框（左/顶/右/底 + 右上折角）
