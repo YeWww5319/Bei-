@@ -897,35 +897,15 @@ struct DiscoverView: View {
         }
     }
 
-    /// 🔴 2026-11-23(二)：最近播放 —— 取播放历史，与新歌推荐完全同款横滑歌曲卡。
-    ///    没听过时给一个轻量占位提示（不占高度骨架），有历史才显示卡片。
+    /// 🔴 2026-11-23(三)：最近播放 —— 取播放历史，与新歌推荐完全同款横滑歌曲卡。
+    ///    🔴 用户新要求：没有最近播放就【整个 section 隐藏】（连标题都不显示），
+    ///       有才显示；并且【去掉「更多」入口和列表页】，只在主页横滑展示。
+    @ViewBuilder
     private var recentlyPlayedSection: some View {
         let recent = Array(library.history.prefix(20))
-        return VStack(alignment: .leading, spacing: 0) {
-            sectionHeader("最近播放") {
-                NavigationLink {
-                    PlaylistDetailView(
-                        playlist: Playlist(id: "local-recent", name: "最近播放",
-                                           coverURL: nil, trackCount: recent.count,
-                                           creatorName: "Aurora", source: .kugou),
-                        initialSongs: recent)
-                } label: {
-                    HStack(spacing: 2) { Text("更多").font(.system(size: 12)); Image(systemName: "chevron.right").font(.system(size: 10)) }
-                        .foregroundStyle(AppStyle.tertiaryText)
-                }
-                .buttonStyle(.plain)
-            }
-
-            if recent.isEmpty {
-                HStack {
-                    Text("听过的歌曲会出现在这里")
-                        .font(.system(size: 13))
-                        .foregroundStyle(AppStyle.tertiaryText)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 18)
-            } else {
+        if !recent.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionHeader("最近播放") {}
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(recent) { song in

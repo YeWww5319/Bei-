@@ -1197,9 +1197,14 @@ struct KugouPlaylistDetail: View {
             withAnimation(.easeOut(duration: 0.2)) {
                 songs.removeAll(where: same)
             }
-            // 同步从详情缓存移除，保证重进页面也不会看到已取消的行；
-            // 重新收藏时 didAdd 接收器会把新实例插回缓存，不依赖旧缓存兜底。
-            Self.detailCache[listid] = (Self.detailCache[listid] ?? []).filter { !same($0) }
+            // 🔴 2026-11-23(三)根因修复：**绝不物理删除 detailCache**。
+            //    之前删掉后，如果用户退出详情页、在播放页/搜索页取消再收藏，
+            //    本页的 didAdd 接收器根本不在（详情页已 deinit），缓存里那行永久丢失，
+            //    重进只能拿到云端裸解析数据（title 空/写成歌手名）→「不显示歌名、重进才有」。
+            //    isExcludedFavorite 现已以 favorites 为权威：取消后 withoutExcludedFavorites
+            //    会自然过滤掉这一行（页面照样不显示），重新收藏后 favorites 又有了它 →
+            //    缓存里保留的完整实例自动重新可见，完全不依赖本页接收器是否活着。
+            //    detailCache 是「已知歌曲的完整数据中心」，只增不减才安全。
         }
         // 🔴 2026-11-22(日)二轮修复：取消收藏后再次收藏，默认收藏列表要【即时】显示这首歌。
         //    上一版只把通知里的 Song insert 到 songs[0]，但仍会失败，原因有两个：
@@ -1595,17 +1600,42 @@ struct KugouPlaylistDetail: View {
     ///    云端裸解析（enrich 前）常把 title 写成歌手名或留空 → 列表只显示歌手名。
     ///    只要这首歌仍被收藏，就用 didAdd 带来的完整实例顶掉它（同一个 id）。
     private static func mergingPinnedFavorite(_ input: [Song], listid: String) -> [Song] {
-        guard let pinned = pinnedFavorites[listid] else { return input }
+        let lib = LibraryStore.shared
+        // 🔴 2026-11-23(三)：以 favorites 权威表校准所有裸数据。
+        //    云端歌单裸解析常把 title 写成歌手名或留空；只要这首歌仍在收藏表里，
+        //    就用收藏时存入的完整实例顶掉它。这样即使详情页接收器没触发（跨页面取消再收藏），
+        //    重进页面 / 后台快照也能显示正确歌名，不依赖 pin 表。
+        //    ⚠️ 一次性建索引字典（id + 歌名|歌手），避免每首线性遍历 favorites 变成 O(n×m)
+        //       在 onBatch 里再次制造卡顿。
+        var favByKey: [String: Song] = [:]
+        var favByName: [String: Song] = [:]
+        for f in lib.favorites {
+            favByKey[f.id] = f
+            if !f.cleanTitle.isEmpty { favByName["\(f.cleanTitle)|\(f.artist)"] = f }
+        }
+        var out = input
+        for idx in out.indices {
+            let full = favByKey[out[idx].id] ??
+                (out[idx].cleanTitle.isEmpty ? nil : favByName["\(out[idx].cleanTitle)|\(out[idx].artist)"])
+            if let full {
+                var fixed = out[idx]
+                if !full.cleanTitle.trimmingCharacters(in: .whitespaces).isEmpty { fixed.title = full.title }
+                if !full.artist.trimmingCharacters(in: .whitespaces).isEmpty { fixed.artist = full.artist }
+                out[idx] = fixed
+            }
+        }
+        // 再叠加「刚收藏那一首」的 pin（带完整对象 + 保证插到首位），兼容 pin 尚未落入
+        // favorites 持久化 / 同名不同 id 变体的极端情况。
+        guard let pinned = pinnedFavorites[listid] else { return out }
         // 若之后又被取消收藏，pinned 失效，清掉并按正常过滤走。
-        guard !LibraryStore.shared.isExcludedFavorite(pinned) else {
+        guard !lib.isExcludedFavorite(pinned) else {
             pinnedFavorites[listid] = nil
-            return input
+            return out
         }
         let same: (Song) -> Bool = { s in
             s.id == pinned.id ||
             (!pinned.cleanTitle.isEmpty && s.cleanTitle == pinned.cleanTitle && s.artist == pinned.artist)
         }
-        var out = input
         if let idx = out.firstIndex(where: same) {
             out[idx] = pinned
         } else {
@@ -1647,20 +1677,22 @@ struct KugouPlaylistDetail: View {
             await MainActor.run {
                 Self.syncDefaultFavorites(ordered, name: name)
             }
-            // 🔴 v2.8.1/v2.8.2：歌手/封面在后台补齐，`onBatch` 逐批随到随填。
-            // 🔴 2026-11-09：大歌单（「我喜欢」576 首）每批都整体替换 songs 会让主线程
-            //    在整个补齐期间被反复打断（一次 diff 576 行），滚动明显卡顿。
-            //    这里对**上屏**做 1.2s 节流：缓存每批都写（便宜），UI 最多 1.2s 刷一次，
-            //    补齐结束后再强制刷最后一次，保证结果不丢。
+            // 🔴 2026-11-23(三)卡顿根因修复：onBatch 每批（6 首）都触发，570 首 ≈ 95 批，
+            //    enrichSongArtists + enrichSongCovers 两路叠加 ≈ 190 次。旧代码每批都在主线程
+            //    做【全量 ordered 排序 O(n log n) + 全量过滤 + 全量 favorites 校准 + 写缓存】，
+            //    滚动时主线程被反复打断 → 卡顿。
+            //    正解：把**所有昂贵计算**（排序/过滤/校准/写缓存/上屏）统一放进节流门闩，
+            //    1.2s 最多做一次；补齐结束后的 final 再强制写一次全量，结果不丢。
             // ⚠️ 快照必须再过一次 ordered()，否则会把「刚加入的歌置顶」冲掉。
             Task { [merged] in
                 let throttle = BatchThrottle()
                 let final = await KugouClient.shared.enrichPlaylistSongs(merged) { snapshot in
+                    // 先过门闩：没到时间就整批跳过，不做任何排序/写缓存（这是卡顿的关键）。
+                    guard throttle.shouldFlush(interval: 1.2) else { return }
                     let snapped = Self.mergingPinnedFavorite(
                         withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(snapshot, forListID: listid)),
                         listid: listid)
                     Self.detailCache[listid] = snapped
-                    guard throttle.shouldFlush(interval: 1.2) else { return }
                     songs = snapped
                 }
                 let finalOrdered = Self.mergingPinnedFavorite(

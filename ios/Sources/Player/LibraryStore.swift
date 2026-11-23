@@ -177,6 +177,15 @@ final class LibraryStore: ObservableObject {
         return excludedFavoriteIDs.contains(song.id)
     }
 
+    /// 🔴 2026-11-23(三)：按 id 或「歌名+歌手」在收藏表里找【完整实例】。
+    ///    收藏时存进 favorites 的 Song 带权威 title/artist；云端歌单裸解析的 title 常为空/错，
+    ///    歌单页用它顶掉裸数据，保证「取消再收藏后歌名正常」不依赖详情页接收器是否活着。
+    func fullFavoriteMatch(for song: Song) -> Song? {
+        if let exact = favorites.first(where: { $0.id == song.id }) { return exact }
+        guard !song.cleanTitle.isEmpty else { return nil }
+        return favorites.first { $0.cleanTitle == song.cleanTitle && $0.artist == song.artist }
+    }
+
     /// 把这首歌所有「已知 id 变体」记进排除集合：当前 id + songCache 里歌名/歌手相同的其它 id。
     /// 🔴 同一首歌在播放页 / 搜索页 / 歌单页的实例 id 可能不同，取消收藏必须把这些变体一起挡住，
     ///    否则云端歌单用另一个 id 刷出来时，`isExcludedFavorite` 判不出来又会显示（红心取消不掉）。

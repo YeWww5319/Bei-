@@ -55,10 +55,16 @@ private final class LyricPickState: ObservableObject {
         if lockedIndex != idx { lockedIndex = idx }
     }
 
-    /// 播放进度追上锁定行（或已经越过）→ 释放锁定，交回 currentIndex 驱动。
+    /// 播放进度**唱过**锁定行（进入下一行）→ 才释放锁定，交回 currentIndex 驱动。
+    /// 🔴 2026-11-23(三)三轮根因：之前用 `current >= locked`，而 `seek(to:)` 里
+    ///    `refreshLyric(at: target)` 会**同步**把 currentIndex 设成锁定行本身（current == locked），
+    ///    onChange 立刻解锁；随后 AVPlayer 异步 seek 的观察器抖动又把 currentIndex 拉回旧行，
+    ///    锁已没了 → 高亮回退，要等真正唱到那行才恢复（用户实测「唱完下一句才高亮」）。
+    ///    改成严格 `>`：seek 到锁定行时 current == locked 不解锁，高亮稳稳停在点播的那行；
+    ///    只有真正唱过它、currentIndex 进入下一行才交回进度驱动。
     func unlockIfReached(_ current: Int?) {
         guard let locked = lockedIndex, let current else { return }
-        if current >= locked { lockedIndex = nil }
+        if current > locked { lockedIndex = nil }
     }
 
     private func scheduleResume() {
@@ -179,8 +185,10 @@ struct BigLyricsView: View {
     }
 
     private func scrollToActive(_ proxy: ScrollViewProxy, animated: Bool) {
+        // 🔴 2026-11-23(三)：锁定期间一律滚到锁定行，别被 seek 观察器抖动的 currentIndex 拉回旧行。
+        let effective = pick.lockedIndex ?? currentIndex
         let id: UUID?
-        if let idx = currentIndex, lyrics.indices.contains(idx) {
+        if let idx = effective, lyrics.indices.contains(idx) {
             id = lyrics[idx].id
         } else {
             id = lyrics.first?.id
@@ -196,17 +204,22 @@ struct BigLyricsView: View {
     private func playFromHere(_ line: LyricLine, proxy: ScrollViewProxy) {
         // 🔴 先标记「自己会滚」再 end()，否则退出选行态的 onChange 会滚回旧当前行。
         if pick.isPicking { suppressResumeScroll = true }
+        // 🔴 2026-11-23(三)：**先锁定再 seek**。onSeek 内部 refreshLyric(at:) 会同步更新
+        //    currentIndex → 触发 onChange → unlockIfReached。若先 seek 后 lock，那次 onChange
+        //    发生在 lock 之前（此时锁还没设，无妨），但随后异步 seek 完成回调里又 refreshLyric
+        //    一次，可能晚于 lock 到达 → 用 current == locked 误解锁。先 lock 更稳。
+        guard let idx = lyrics.firstIndex(where: { $0.id == line.id }) else {
+            pick.end()
+            onSeek?(line.time)
+            Haptics.light()
+            return
+        }
+        pick.lockAndEnd(idx)
         onSeek?(line.time)
         Haptics.light()
-        // 🔴 2026-11-23(二)：锁定目标行为高亮放大行，别等 currentIndex（要等唱完）。
-        if let idx = lyrics.firstIndex(where: { $0.id == line.id }) {
-            pick.lockAndEnd(idx)
-            let target = lyrics[idx].id
-            withAnimation(.easeInOut(duration: 0.35)) {
-                proxy.scrollTo(target, anchor: Self.activeAnchor)
-            }
-        } else {
-            pick.end()
+        let target = lyrics[idx].id
+        withAnimation(.easeInOut(duration: 0.35)) {
+            proxy.scrollTo(target, anchor: Self.activeAnchor)
         }
     }
 
@@ -293,6 +306,7 @@ struct BigLyricsView: View {
                 playFromHere(line, proxy: proxy)
             } else {
                 // 🔴 2026-11-23(二)：非选行态点行也锁定该行，立刻放大高亮（不等唱到）。
+                //    同样先锁后 seek（见 playFromHere 注释）。
                 if let idx = lyrics.firstIndex(where: { $0.id == line.id }) {
                     pick.lockAndEnd(idx)
                 }

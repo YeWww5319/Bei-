@@ -16,7 +16,7 @@ enum PlayerActionGlyph {
     case more       // 更多（三个实心圆点，竖排）
     case downloaded // 已下载（同款下载外框，角标「已下载」）
     case soundEffect // 音效（唱片：外圆+内圆+两条弧线，Lucide disc-3）— 2026-11-22(四) 按参考图
-    case source     // 音源（甲虫/芯片造型，Lucide bug）— 2026-11-22(四) 按参考图
+    case source     // 音源（链条/链接造型，Lucide link）— 2026-11-23(三) 按参考图
 }
 
 /// 统一规格的动作图标：24×24 画布坐标 → 实际 size，线宽随 size 等比缩放。
@@ -78,8 +78,8 @@ struct PlayerActionIcon: View {
                 //    「已下载」弹窗提示区分（见 PlayerView.classicDownloadButton）。
                 LucideIcon(icon: .squareArrowDownEnter, size: size, color: tint)
             case .source:
-                // 🔴 2026-11-22(四)：音源按钮按最新参考图换成 bug（甲虫/芯片造型）。
-                LucideIcon(icon: .bug, size: size, color: tint)
+                // 🔴 2026-11-23(三)：音源按钮按最新参考图换成 link（两枚斜向扣合的链环）。
+                LucideIcon(icon: .link, size: size, color: tint)
             }
         }
         .frame(width: size, height: size)
