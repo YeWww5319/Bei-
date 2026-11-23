@@ -248,8 +248,10 @@ struct BigLyricsView: View {
                     .fixedSize()
 
                 Text(line.text)
-                    .font(.system(size: (LyricsFontScale.activeBase + 3) * scale,
-                                  weight: .semibold))
+                    // 🔴 2026-11-23(四)：滑动选中的歌词字号改成和播放时高亮行完全一致
+                    //    （此前是 activeBase+3=25pt semibold，比播放高亮的 22pt bold 大一号）。
+                    .font(.system(size: LyricsFontScale.activeBase * scale,
+                                  weight: .bold))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)

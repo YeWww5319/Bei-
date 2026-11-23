@@ -34,17 +34,37 @@ final class DownloadManager: NSObject, ObservableObject {
     private var doneIDs: Set<String> = []
     /// 归一化「歌名+歌手」→ 已完成（同 sameTrack 规则），供 hash 变体 O(1) 命中。
     private var doneTrackKeys: Set<String> = []
+    /// 🔴 2026-11-23(四)卡顿修复：进行中（等待/下载中）的 id + 归一化 key。
+    ///    菜单行的「下载中…」判定原来是 `item(for:)` 线性扫全表，574 首歌单每行都扫 → 掉帧。
+    private var activeIDs: Set<String> = []
+    private var activeTrackKeys: Set<String> = []
 
     private func rebuildDoneIndex() {
         var ids: Set<String> = []
         var keys: Set<String> = []
-        for item in items where item.isDone {
-            ids.insert(item.id)
+        var actIDs: Set<String> = []
+        var actKeys: Set<String> = []
+        for item in items {
             let key = Self.trackKey(item.song)
-            if !key.isEmpty { keys.insert(key) }
+            if item.isDone {
+                ids.insert(item.id)
+                if !key.isEmpty { keys.insert(key) }
+            } else if item.state.isActive {
+                actIDs.insert(item.id)
+                if !key.isEmpty { actKeys.insert(key) }
+            }
         }
         doneIDs = ids
         doneTrackKeys = keys
+        activeIDs = actIDs
+        activeTrackKeys = actKeys
+    }
+
+    /// O(1) 判断一首歌是否正在下载（含 hash 变体），供大列表行菜单使用。
+    func isActiveFast(_ song: Song) -> Bool {
+        if activeIDs.contains(song.id) { return true }
+        let key = Self.trackKey(song)
+        return !key.isEmpty && activeTrackKeys.contains(key)
     }
 
     /// 归一化 key：去空白、小写，「歌名|歌手」（与 sameTrack 同规则）。

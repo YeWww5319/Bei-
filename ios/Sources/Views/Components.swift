@@ -1727,17 +1727,18 @@ struct SongMoreMenu: View {
     var buttonSize: CGFloat = 44
     var tint: Color = AppStyle.tertiaryText
 
-    @ObservedObject private var library = LibraryStore.shared
     @ObservedObject private var downloads = DownloadManager.shared
     @ObservedObject private var kugouAuth = KugouAuth.shared
     @State private var showKugouPicker = false
     @State private var showQualityPicker = false
 
-    /// 已下载：磁盘有文件 / 本地导入 / 曲库下载列表里登记过（三种来源都算）。
+    /// 已下载：本地导入 / 已完成下载（三种来源都算）。
+    /// 🔴 2026-11-23(四)卡顿根因：旧版 `downloads.isDownloaded(song)` 每行都做
+    ///    `FileManager.fileExists`（磁盘 I/O）+ `library.downloads.contains{}`（O(n) 线性扫），
+    ///    574 首歌单滚动时每个可见行 body 都跑一遍 → 主线程掉帧。
+    ///    改用 O(1) 内存索引 `isDoneFast`（已覆盖 hash 变体 + 曲库登记项），零磁盘 I/O。
     private var isDownloaded: Bool {
-        downloads.isDownloaded(song)
-            || song.source == .local
-            || library.downloads.contains { $0.id == song.id }
+        song.source == .local || downloads.isDoneFast(song)
     }
 
     var body: some View {
@@ -1751,7 +1752,8 @@ struct SongMoreMenu: View {
                     Label("删除下载", systemImage: "trash")
                 }
             } else if song.isRemote {
-                if downloads.item(for: song)?.state.isActive == true {
+                // 🔴 2026-11-23(四)：item(for:) 是 O(n) 线性扫，换成 O(1) 内存索引。
+                if downloads.isActiveFast(song) {
                     Text("下载中…")
                 } else {
                     Button { startDownload() } label: {
