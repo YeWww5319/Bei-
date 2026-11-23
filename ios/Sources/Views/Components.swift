@@ -1598,7 +1598,9 @@ struct SongRow: View {
     /// 🔴 3.0.0：本地歌曲或下载完成的网络歌曲都算「已下载」。
     /// 只查内存里的下载索引，不做磁盘 fileExists —— 几百首的大歌单每行都读磁盘会卡。
     private var isLocalSong: Bool {
-        song.source == .local || downloads.item(for: song)?.isDone == true
+        // 🔴 2026-11-23(二)：走 O(1) 索引（旧 item(for:) 在 hash 变体时线性扫全表，
+        //    574 首歌单滚动每行 O(n) → 掉帧）。
+        song.source == .local || downloads.isDoneFast(song)
     }
 
     var body: some View {

@@ -880,6 +880,8 @@ struct DiscoverView: View {
 
     private var recommendContent: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // 🔴 2026-11-23(二)：新歌推荐上方加「最近播放」横滑列表（与新歌推荐同款版式）。
+            recentlyPlayedSection
             // 🔴 v2.9.12：新歌推荐上移到「每日推荐 / 猜你喜欢」（bigCardsGrid）之上
             newSongSection
             // 🔴 v2.9.7(二)：用户要求「新歌推荐」下面加回「经典推荐」，
@@ -892,6 +894,48 @@ struct DiscoverView: View {
             artistStripSection
             artistAlbumSection
             rankRecommendSection
+        }
+    }
+
+    /// 🔴 2026-11-23(二)：最近播放 —— 取播放历史，与新歌推荐完全同款横滑歌曲卡。
+    ///    没听过时给一个轻量占位提示（不占高度骨架），有历史才显示卡片。
+    private var recentlyPlayedSection: some View {
+        let recent = Array(library.history.prefix(20))
+        return VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("最近播放") {
+                NavigationLink {
+                    PlaylistDetailView(
+                        playlist: Playlist(id: "local-recent", name: "最近播放",
+                                           coverURL: nil, trackCount: recent.count,
+                                           creatorName: "Aurora", source: .kugou),
+                        initialSongs: recent)
+                } label: {
+                    HStack(spacing: 2) { Text("更多").font(.system(size: 12)); Image(systemName: "chevron.right").font(.system(size: 10)) }
+                        .foregroundStyle(AppStyle.tertiaryText)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if recent.isEmpty {
+                HStack {
+                    Text("听过的歌曲会出现在这里")
+                        .font(.system(size: 13))
+                        .foregroundStyle(AppStyle.tertiaryText)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 18)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(recent) { song in
+                            slideSongCard(song, queue: recent, size: 108, sourceName: "最近播放")
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 2)
+                }
+            }
         }
     }
 
@@ -1120,13 +1164,18 @@ struct DiscoverView: View {
 
     // MARK: 🔴 v2.9.7 榜单推荐
 
-    /// 「榜单推荐」要展示的 4 个榜（酷狗 rankID → 展示名）。
-    /// 顺序按用户指定的：会员热歌榜 / 网络热歌榜 / 酷狗飙升榜 / 百万收藏榜。
+    /// 「榜单推荐」要展示的榜（酷狗 rankID → 展示名）。
+    /// 🔴 2026-11-23(二)：用户要求再加几个榜单 —— 从 rankOrder 里补入真实有数据的榜
+    ///    （短视频热歌榜 / DJ热歌榜 / 80后热歌榜 / 90后热歌榜），与新歌推荐一样横滑展示。
     private static let recommendRankIDs: [(id: String, displayName: String)] = [
         ("35811", "会员热歌榜"),
         ("82831", "网络热歌榜"),
         ("6666", "酷狗飙升榜"),
         ("85432", "百万收藏榜"),
+        ("52144", "短视频热歌榜"),
+        ("24971", "DJ热歌榜"),
+        ("49225", "80后热歌榜"),
+        ("49223", "90后热歌榜"),
     ]
 
     /// 推荐页里的「榜单推荐」数据源：从已加载的榜单里挑出这 4 个。
@@ -1178,8 +1227,12 @@ struct DiscoverView: View {
                     .padding(.vertical, 2)
                 }
             }
+            // 🔴 2026-11-23(二)：榜单推荐是推荐流最后一屏，卡片副标题（歌名/更新频率）
+            //    在卡片下方，滚到底时正好压在迷你播放条上被遮住。这里单独补一段底部
+            //    留白把它顶上去（只作用于本 section，不动全局 safeAreaInset，避免双重留白）。
+            Color.clear.frame(height: 64)
         }
-        // 这 4 个榜的前 3 首预览要单独拉 —— 榜单 Tab 的预拉取只在切到那个 Tab 时才跑。
+        // 这几个榜的前 3 首预览要单独拉 —— 榜单 Tab 的预拉取只在切到那个 Tab 时才跑。
         .task(id: lists.map(\.playlist.id)) {
             await loadRankPreviews(for: lists.map(\.playlist))
         }

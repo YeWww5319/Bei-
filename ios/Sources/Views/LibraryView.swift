@@ -1190,6 +1190,10 @@ struct KugouPlaylistDetail: View {
             let same: (Song) -> Bool = { $0.id == removed.id ||
                 (!removed.cleanTitle.isEmpty && $0.cleanTitle == removed.cleanTitle && $0.artist == removed.artist) }
             PlaylistSortMemo.shared.invalidate(sortListKey)
+            // 取消收藏：清掉 pinned（若取消的正是 pinned 那首），防止再进页面被顶回来。
+            if let pinned = Self.pinnedFavorites[listid], same(pinned) {
+                Self.pinnedFavorites[listid] = nil
+            }
             withAnimation(.easeOut(duration: 0.2)) {
                 songs.removeAll(where: same)
             }
@@ -1211,8 +1215,10 @@ struct KugouPlaylistDetail: View {
             // 同一首歌 id / 「歌名+歌手」双判据去重，避免重复行。
             let same: (Song) -> Bool = { $0.id == added.id ||
                 (!added.cleanTitle.isEmpty && $0.cleanTitle == added.cleanTitle && $0.artist == added.artist) }
-            if songs.contains(where: same) { return }
-            var rebuilt = songs
+            // 🔴 2026-11-23(二)：记住这个完整实例，后续所有后台快照 / 缓存回写都要保住它，
+            //    否则云端裸解析（title 空/写成歌手名）晚到会把歌名冲掉。
+            Self.pinnedFavorites[listid] = added
+            var rebuilt = songs.filter { !same($0) }   // 先剔除旧的同名 id（避免重复行）
             rebuilt.insert(added, at: 0)
             Self.detailCache[listid] = rebuilt
             PlaylistSortMemo.shared.invalidate(sortListKey)
@@ -1561,6 +1567,11 @@ struct KugouPlaylistDetail: View {
     ///    需要复用它拿「已排序 + 已 enrich 的列表第一首」，保证列表封面 == 头图 == 列表第一行。
     static var detailCache: [String: [Song]] = [:]
     private static var cacheTime: [String: Date] = [:]
+    /// 🔴 2026-11-23(二)根因修复：刚重新收藏的歌（title/歌手完整实例），按 listid 索引。
+    ///    后台 enrich 快照用的是云端「裸解析」数据（title 常为空 → 只剩歌手名），
+    ///    它晚到时会把 didAdd 插入的完整实例覆盖 → 表现为「取消再收藏后不显示歌名、
+    ///    重进列表才有」。用静态表（后台 Task 在收藏前就创建，@State 捕获会是旧值 nil）。
+    private static var pinnedFavorites: [String: Song] = [:]
     /// 缓存有效期：超过这个时间，下次进入时旧数据先显示、再在后台静默刷新
     private static let cacheTTL: TimeInterval = 300
 
@@ -1580,8 +1591,32 @@ struct KugouPlaylistDetail: View {
         return input.filter { !excluded.isExcludedFavorite($0) }
     }
 
+    /// 🔴 2026-11-23(二)：把刚收藏的完整实例合并进任意快照 / 缓存数组。
+    ///    云端裸解析（enrich 前）常把 title 写成歌手名或留空 → 列表只显示歌手名。
+    ///    只要这首歌仍被收藏，就用 didAdd 带来的完整实例顶掉它（同一个 id）。
+    private static func mergingPinnedFavorite(_ input: [Song], listid: String) -> [Song] {
+        guard let pinned = pinnedFavorites[listid] else { return input }
+        // 若之后又被取消收藏，pinned 失效，清掉并按正常过滤走。
+        guard !LibraryStore.shared.isExcludedFavorite(pinned) else {
+            pinnedFavorites[listid] = nil
+            return input
+        }
+        let same: (Song) -> Bool = { s in
+            s.id == pinned.id ||
+            (!pinned.cleanTitle.isEmpty && s.cleanTitle == pinned.cleanTitle && s.artist == pinned.artist)
+        }
+        var out = input
+        if let idx = out.firstIndex(where: same) {
+            out[idx] = pinned
+        } else {
+            // 快照把这首弄丢了也要补回来（重收藏后必须即时可见）。
+            out.insert(pinned, at: 0)
+        }
+        return out
+    }
+
     private func load() async {
-        let cached = withoutExcludedFavorites(Self.detailCache[listid] ?? [])
+        let cached = Self.mergingPinnedFavorite(withoutExcludedFavorites(Self.detailCache[listid] ?? []), listid: listid)
         if !cached.isEmpty {
             songs = cached
             isLoading = false
@@ -1604,7 +1639,7 @@ struct KugouPlaylistDetail: View {
             // 🔴 v2.8.2：二次进入/刷新时保留已补齐的歌手/封面，不把之前的反查成果打回占位
             let merged = mergePreservingEnriched(reversed)
             // 🔴 v2.9.5：刚存进来的歌排到第一位（其余保持上面的倒序）
-            let ordered = KugouRecentAdditions.shared.ordered(merged, forListID: listid)
+            let ordered = Self.mergingPinnedFavorite(KugouRecentAdditions.shared.ordered(merged, forListID: listid), listid: listid)
             songs = ordered
             Self.detailCache[listid] = ordered
             Self.cacheTime[listid] = Date()
@@ -1621,12 +1656,16 @@ struct KugouPlaylistDetail: View {
             Task { [merged] in
                 let throttle = BatchThrottle()
                 let final = await KugouClient.shared.enrichPlaylistSongs(merged) { snapshot in
-                    let snapped = withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(snapshot, forListID: listid))
+                    let snapped = Self.mergingPinnedFavorite(
+                        withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(snapshot, forListID: listid)),
+                        listid: listid)
                     Self.detailCache[listid] = snapped
                     guard throttle.shouldFlush(interval: 1.2) else { return }
                     songs = snapped
                 }
-                let finalOrdered = withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(final, forListID: listid))
+                let finalOrdered = Self.mergingPinnedFavorite(
+                    withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(final, forListID: listid)),
+                    listid: listid)
                 Self.detailCache[listid] = finalOrdered
                 Self.cacheTime[listid] = Date()
                 // 强制补最后一次（节流可能吞掉末尾批次）；保留补齐期间用户刚存进来的歌。

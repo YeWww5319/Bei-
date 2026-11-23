@@ -294,13 +294,10 @@ struct QueueView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(AppStyle.secondaryText)
                             .lineLimit(1)
-                        if let tag = entry.song.tags.first, !tag.isEmpty {
-                            Text(tag)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(Color(red: 0.16, green: 0.70, blue: 0.36))
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Color(red: 0.16, green: 0.70, blue: 0.36).opacity(0.12),
-                                            in: RoundedRectangle(cornerRadius: 3))
+                        // 🔴 2026-11-23(二)：VIP 标签改成与播放器 / 迷你条 / 歌曲行统一的
+                        //    VIPTag 灰色胶囊样式（原来是绿色底绿字，全 App 独一份）。
+                        if entry.song.tags.contains("VIP") {
+                            VIPTag(textColor: AppStyle.secondaryText)
                         }
                     }
                 }

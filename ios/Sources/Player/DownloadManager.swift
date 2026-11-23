@@ -21,9 +21,45 @@ final class DownloadManager: NSObject, ObservableObject {
 
     @Published private(set) var items: [DownloadItem] = [] {
         didSet {
+            rebuildDoneIndex()
             // 🔴 v2.8.3：有下载任务进行中就保持屏幕常亮（熄屏会把下载挂起）
             IdleTimerKeeper.shared.set("song-downloads", !items.isEmpty)
         }
+    }
+
+    /// 🔴 2026-11-23(二)卡顿根因修复：已下载歌曲的 O(1) 查询索引。
+    ///    旧版每行 SongRow 都调 `item(for:)`，hash 不同时线性扫全表做 sameTrack 字符串归一化；
+    ///    574 首歌单滚动 = 每行 O(n) → 掉帧。这里在 items 变化时一次性建好两个 Set，
+    ///    列表行改走 `isDoneFast(_:)` O(1)。items 只在主线程改，索引天然线程安全。
+    private var doneIDs: Set<String> = []
+    /// 归一化「歌名+歌手」→ 已完成（同 sameTrack 规则），供 hash 变体 O(1) 命中。
+    private var doneTrackKeys: Set<String> = []
+
+    private func rebuildDoneIndex() {
+        var ids: Set<String> = []
+        var keys: Set<String> = []
+        for item in items where item.isDone {
+            ids.insert(item.id)
+            let key = Self.trackKey(item.song)
+            if !key.isEmpty { keys.insert(key) }
+        }
+        doneIDs = ids
+        doneTrackKeys = keys
+    }
+
+    /// 归一化 key：去空白、小写，「歌名|歌手」（与 sameTrack 同规则）。
+    private static func trackKey(_ song: Song) -> String {
+        let t = song.cleanTitle.filter { !$0.isWhitespace }.lowercased()
+        let a = song.artist.filter { !$0.isWhitespace }.lowercased()
+        guard !t.isEmpty else { return "" }
+        return t + "|" + a
+    }
+
+    /// O(1) 判断一首歌是否已下载完成（含 hash 变体），供大列表行使用。
+    func isDoneFast(_ song: Song) -> Bool {
+        if doneIDs.contains(song.id) { return true }
+        let key = Self.trackKey(song)
+        return !key.isEmpty && doneTrackKeys.contains(key)
     }
 
     /// 🔴 v2.9.14：默认下载音质。nil = 每次点下载都弹窗让用户选；

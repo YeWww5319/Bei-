@@ -26,6 +26,11 @@ private struct LyricRowFrameKey: PreferenceKey {
 private final class LyricPickState: ObservableObject {
     @Published var isPicking = false
     @Published var pickedIndex: Int? = nil
+    /// 🔴 2026-11-23(二)：点「从这行播放」后锁定的高亮行。
+    ///    currentIndex 由播放进度驱动，seek 后要等真正唱到那行才更新（用户实测
+    ///    「要等唱完才显示下一句高亮」）。锁定后该行立即放大高亮，直到 currentIndex
+    ///    追上它才释放，过渡无跳变。
+    @Published var lockedIndex: Int? = nil
     private var resumeWork: DispatchWorkItem?
 
     func begin() {
@@ -42,6 +47,18 @@ private final class LyricPickState: ObservableObject {
         resumeWork = nil
         isPicking = false
         pickedIndex = nil
+    }
+
+    /// 点这行播放：锁定它为高亮行，退出选行态（lockedIndex 保留）。
+    func lockAndEnd(_ idx: Int) {
+        end()
+        if lockedIndex != idx { lockedIndex = idx }
+    }
+
+    /// 播放进度追上锁定行（或已经越过）→ 释放锁定，交回 currentIndex 驱动。
+    func unlockIfReached(_ current: Int?) {
+        guard let locked = lockedIndex, let current else { return }
+        if current >= locked { lockedIndex = nil }
     }
 
     private func scheduleResume() {
@@ -117,13 +134,16 @@ struct BigLyricsView: View {
                     scrollToActive(proxy, animated: false)
                 }
                 .onChange(of: outer.size.height) { viewportHeight = $0 }
-                .onChange(of: currentIndex) { _ in
+                .onChange(of: currentIndex) { new in
                     // 选行态里别自动回滚，否则用户一滑就被拉回当前行。
                     guard !pick.isPicking else { return }
+                    // 🔴 2026-11-23(二)：播放进度追上锁定行才释放，高亮交回 currentIndex。
+                    pick.unlockIfReached(new)
                     scrollToActive(proxy, animated: true)
                 }
                 .onChange(of: lyrics) { _ in
                     pick.end()
+                    pick.lockedIndex = nil
                     scrollToActive(proxy, animated: false)
                 }
                 .onChange(of: pick.isPicking) { picking in
@@ -178,22 +198,25 @@ struct BigLyricsView: View {
         if pick.isPicking { suppressResumeScroll = true }
         onSeek?(line.time)
         Haptics.light()
-        pick.end()
-        // 从选行态跳播：立刻把目标行滚回偏上位置；currentIndex 随后更新的 onChange
-        // 也会补一次（选行态已结束，guard 放行），重复滚动无副作用。
+        // 🔴 2026-11-23(二)：锁定目标行为高亮放大行，别等 currentIndex（要等唱完）。
         if let idx = lyrics.firstIndex(where: { $0.id == line.id }) {
+            pick.lockAndEnd(idx)
             let target = lyrics[idx].id
             withAnimation(.easeInOut(duration: 0.35)) {
                 proxy.scrollTo(target, anchor: Self.activeAnchor)
             }
+        } else {
+            pick.end()
         }
     }
 
     // MARK: - 单行
 
     private func lyricRow(idx: Int, line: LyricLine, proxy: ScrollViewProxy) -> some View {
-        let activeIdx = currentIndex
+        // 🔴 2026-11-23(二)：锁定行优先于 currentIndex —— 点这行播放立刻放大高亮。
+        let activeIdx = pick.lockedIndex ?? currentIndex
         let isActive = activeIdx == idx
+        let isLocked = pick.lockedIndex == idx        // 点这行播放后立即放大高亮的那一行
         let isNear = activeIdx != nil && abs(idx - activeIdx!) <= 1
         let isPicked = pick.isPicking && pick.pickedIndex == idx
         let scale = CGFloat(max(0.6, min(1.6, lyricsFontScale)))
@@ -236,9 +259,9 @@ struct BigLyricsView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
             } else {
                 Text(line.text)
-                    .font(.system(size: textSize(isActive: isActive, isPicked: false) * scale,
+                    .font(.system(size: textSize(isActive: isActive, isPicked: isLocked) * scale,
                                   weight: isActive ? .bold : .medium))
-                    .foregroundStyle(textColor(isActive: isActive, isPicked: false, isNear: isNear))
+                    .foregroundStyle(textColor(isActive: isActive, isPicked: isLocked, isNear: isNear))
                     .multilineTextAlignment(.center)
             }
 
@@ -269,6 +292,10 @@ struct BigLyricsView: View {
             if pick.isPicking {
                 playFromHere(line, proxy: proxy)
             } else {
+                // 🔴 2026-11-23(二)：非选行态点行也锁定该行，立刻放大高亮（不等唱到）。
+                if let idx = lyrics.firstIndex(where: { $0.id == line.id }) {
+                    pick.lockAndEnd(idx)
+                }
                 onSeek?(line.time)
                 Haptics.light()
             }
