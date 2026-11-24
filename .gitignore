@@ -30,7 +30,7 @@ Cartfile
 ios/ExportOptions.plist
 
 # 内置音源
-# luoxue.js（洛雪音源6，MIT 许可）随包发布，故意入库。
+# 0_gaopin.js / 1_kxh.js 随包发布，故意入库（1_kxh.js 头部声明 MIT）。
 # 没有 license 声明的第三方音源放本地槽位，照样打进 IPA，但不入库。
 ios/BundledSources/*.local.js
 ios/BundledSources/changqing.js

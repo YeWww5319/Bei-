@@ -1654,7 +1654,9 @@ struct SongRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 // 🔴 2026-11-12：长歌名不再截成「…」，改成 UIKit 层匀速横向滚动。
                 //    只有真正超出宽度的行才启动动画，短标题与普通 Text 一样零开销。
-                MarqueeText(text: song.cleanTitle,
+                // 🔴 2026-11-25：任何路径漏进来的裸数据（歌名空 / 被写成歌手名）
+                //    都在这里用 O(1) 档案兜底，保证列表永远显示得出歌名。
+                MarqueeText(text: LibraryStore.shared.displayTitle(for: song),
                             size: 15,
                             weight: .medium,
                             color: isCurrent ? AppStyle.accent : AppStyle.primaryText)

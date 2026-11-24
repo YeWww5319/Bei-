@@ -1193,7 +1193,9 @@ struct KugouPlaylistDetail: View {
             //    兼容歌单实例 id 与播放页/搜索页实例 id 不一致的变体。
             let removed: Song?
             if let song = note.object as? Song {
-                removed = song
+                // 🔴 2026-11-25：通知里的 Song 可能只有歌手名（裸解析），
+                //    下面的「歌名+歌手」双判据会因此匹配不到对应行。
+                removed = LibraryStore.shared.canonicalSong(for: song)
             } else if let rid = note.object as? String {
                 removed = songs.first { $0.id == rid }   // 兼容旧调用
             } else {
@@ -1227,7 +1229,12 @@ struct KugouPlaylistDetail: View {
         //    正解：以 detailCache（取消时保留了该行）为权威源重建，强制补进刚收藏的歌，
         //    再按当前 excluded 过滤；同时失效排序缓存、写回 detailCache（挡住晚到的快照）。
         .onReceive(NotificationCenter.default.publisher(for: .auroraFavoriteDidAdd)) { note in
-            guard name == "默认收藏", let added = note.object as? Song else { return }
+            guard name == "默认收藏", let rawAdded = note.object as? Song else { return }
+            // 🔴 2026-11-25 根因：触发收藏的那一行的 Song 可能是云端裸解析数据
+            //    （title 为空 / 被写成歌手名）。之前直接把它 insert 到首行并 pin 住，
+            //    结果就是「取消再收藏后这一行只显示歌手名，重进歌单才恢复」。
+            //    先过权威档案补齐，再插入 / pin / 写缓存。
+            let added = LibraryStore.shared.canonicalSong(for: rawAdded)
             // 🔴 2026-11-23(一)：以当前列表为基底插入刚收藏的歌，不再从 detailCache 整体重建
             //    （重建会把后台 enrich 的补齐结果打回、且旧实例 id 与新收藏实例 id 不一致时
             //    容易出错）。isExcludedFavorite 已改为以 favorites 为权威，刚收藏的歌不会被过滤。
@@ -1648,15 +1655,23 @@ struct KugouPlaylistDetail: View {
         for idx in out.indices {
             let full = favByKey[out[idx].id] ??
                 (out[idx].cleanTitle.isEmpty ? nil : favByName["\(out[idx].cleanTitle)|\(out[idx].artist)"])
+            var fixed = out[idx]
             if let full {
-                var fixed = out[idx]
-                if !full.cleanTitle.trimmingCharacters(in: .whitespaces).isEmpty { fixed.title = full.title }
-                if !full.artist.trimmingCharacters(in: .whitespaces).isEmpty { fixed.artist = full.artist }
-                out[idx] = fixed
+                // 🔴 2026-11-25：收藏表里可能残留旧版本写进去的脏实例（title=歌手名），
+                //    绝不能拿它反过来覆盖行里的正确歌名。
+                let fullTitle = full.cleanTitle.trimmingCharacters(in: .whitespaces)
+                let fullArtist = full.artist.trimmingCharacters(in: .whitespaces)
+                if !fullTitle.isEmpty && fullTitle != fullArtist {
+                    fixed.title = full.title
+                    if !fullArtist.isEmpty { fixed.artist = full.artist }
+                }
             }
+            out[idx] = fixed
         }
         // 再叠加「刚收藏那一首」的 pin（带完整对象 + 保证插到首位），兼容 pin 尚未落入
         // favorites 持久化 / 同名不同 id 变体的极端情况。
+        // ⚠️ 这里只依赖本函数已取好的 favorites 快照：后台 onBatch 可能落在协作线程池，
+        //    不再额外读 LibraryStore 的 songCache 字典（避免与主线程写档案并发）。
         guard let pinned = pinnedFavorites[listid] else { return out }
         // 若之后又被取消收藏，pinned 失效，清掉并按正常过滤走。
         guard !lib.isExcludedFavorite(pinned) else {
@@ -1687,6 +1702,8 @@ struct KugouPlaylistDetail: View {
             songs = cached
             listVersion += 1
             isLoading = false
+            // 🔴 2026-11-25：把已解析好的完整实例沉淀进歌曲档案，供收藏 / 行渲染兜底。
+            LibraryStore.shared.learnSongs(cached)
             Self.syncDefaultFavorites(cached, name: name)
             // 缓存还新鲜 → 直接用，完全不重新加载
             if let at = Self.cacheTime[listid], Date().timeIntervalSince(at) < Self.cacheTTL { return }
@@ -1711,6 +1728,9 @@ struct KugouPlaylistDetail: View {
             listVersion += 1
             Self.detailCache[listid] = ordered
             Self.cacheTime[listid] = Date()
+            // 🔴 2026-11-25：云端完整解析结果是权威数据，先沉淀进档案再并入收藏，
+            //    这样「取消收藏 → 再收藏」时能从档案拿回正确歌名。
+            LibraryStore.shared.learnSongs(ordered)
             // 🔴 2026-11-15：默认收藏是云端收藏歌单，歌曲并入本地收藏，红心才会同步变红。
             await MainActor.run {
                 Self.syncDefaultFavorites(ordered, name: name)
@@ -1739,6 +1759,8 @@ struct KugouPlaylistDetail: View {
                     listid: listid)
                 Self.detailCache[listid] = finalOrdered
                 Self.cacheTime[listid] = Date()
+                // 补齐后的实例（歌手/封面/歌名最全）再沉淀一次，主线程写档案避免并发。
+                await MainActor.run { LibraryStore.shared.learnSongs(finalOrdered) }
                 // 强制补最后一次（节流可能吞掉末尾批次）；保留补齐期间用户刚存进来的歌。
                 let finalIDs = Set(finalOrdered.map(\.id))
                 let fresh = songs.filter { !finalIDs.contains($0.id) }

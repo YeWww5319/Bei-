@@ -233,6 +233,16 @@ final class SourceStore: ObservableObject {
         sources.filter { $0.enabled && $0.isUsable }
     }
 
+    /// 🔴 2026-11-25：多个内置音源按列表顺序编号显示，不暴露脚本文案。
+    ///    第 1 个「默认音源」、第 2 个「默认音源2」……；用户拖动排序后编号跟着
+    ///    当前顺序走。非内置音源照旧显示自己的名字。
+    func displayName(for source: ThirdPartySource) -> String {
+        guard source.isBundled else { return source.name }
+        let builtins = sources.filter { $0.isBundled }
+        let ordinal = (builtins.firstIndex(where: { $0.id == source.id }) ?? 0) + 1
+        return ordinal == 1 ? "默认音源" : "默认音源\(ordinal)"
+    }
+
     /// 🔴 2026-11-19：当前使用的音源（解析优先级最高的第一个可用音源）。
     /// 音质页据此显示「当前音源」及它支持的档位。
     var currentSource: ThirdPartySource? { enabledSources.first }
@@ -314,6 +324,26 @@ final class SourceStore: ObservableObject {
             } else {
                 list.insert(source, at: 0)
             }
+        }
+        persist()
+    }
+
+    /// 🔴 2026-11-25：新装第二个内置音源时，`insertBuiltinFront` 会把新源插到最前，
+    ///    结果「默认音源2」反而成了第一优先级。这里按包内文件名字典序把内置音源之间的
+    ///    相对顺序对齐（第 1 个 = 默认音源，第 2 个 = 默认音源2），且只占原来的槽位、
+    ///    不动用户手动导入的其它音源。只在有新增时调用一次，之后用户自己拖动的优先级
+    ///    不会被反复覆盖。
+    func alignBuiltinOrder(_ orderedNames: [String]) {
+        mutateSources { list in
+            let slots = list.indices.filter { list[$0].isBundled }
+            guard slots.count > 1 else { return }
+            var builtins = slots.map { list[$0] }
+            builtins.sort {
+                let a = orderedNames.firstIndex(of: $0.name) ?? Int.max
+                let b = orderedNames.firstIndex(of: $1.name) ?? Int.max
+                return a < b
+            }
+            for (slot, source) in zip(slots, builtins) { list[slot] = source }
         }
         persist()
     }

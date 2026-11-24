@@ -311,7 +311,7 @@ private struct SourcePickerRowView: View {
         HStack(spacing: 10) {
             healthDot
             VStack(alignment: .leading, spacing: 5) {
-                Text(source.isBundled ? "默认音源" : source.name)
+                Text(SourceStore.shared.displayName(for: source))
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(AppStyle.primaryText)
                     .lineLimit(1)

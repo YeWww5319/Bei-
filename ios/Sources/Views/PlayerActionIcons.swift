@@ -15,7 +15,7 @@ enum PlayerActionGlyph {
     case translate  // 翻译（「文」字骨架）
     case more       // 更多（三个实心圆点，竖排）
     case downloaded // 已下载（同款下载外框，角标「已下载」）
-    case soundEffect // 音效（L 形坐标轴 + 两根「日」字推子，左矮右高）— 2026-11-24(七) 按参考图
+    case soundEffect // 音效（圆角方框 + 空心五角星）— 2026-11-25 按参考图
     case source     // 音源（甲虫 bug，Lucide bug）— 2026-11-24(七) 按参考图
 }
 
@@ -58,10 +58,9 @@ struct PlayerActionIcon: View {
                     QualityRings().stroke(tint, style: stroke)
                 }
             case .soundEffect:
-                // 🔴 2026-11-24(七)：按最新参考图改成「均衡器推子」——
-                //    左侧 L 形坐标轴 + 两根竖直圆角推子（各有一条横分隔，左矮右高）。
-                //    自绘保证与动作行同一线宽/圆头，逐像素描摹过参考图。
-                EqualizerGlyph().stroke(tint, style: stroke)
+                // 🔴 2026-11-25：按最新参考图改成「圆角方框 + 中央空心五角星」。
+                //    外框与星形同线宽、同圆头圆角，沿用 24×24 全局画布。
+                SoundEffectStarBoxGlyph().stroke(tint, style: stroke)
             case .lyric:
                 // 大圆角正方形外框 + 中间「词」字（参考图 6ccb467 同款）
                 ZStack {
@@ -180,33 +179,19 @@ private struct DownloadArrow: Shape {
     }
 }
 
-/// 音效「均衡器推子」（2026-11-24(七) 最新参考图）：
-/// 左侧一条 L 形坐标轴（竖 x3.4 / 底横 y20.6 → x21），框内两根竖直圆角推子，
-/// 每根中间一条横分隔把推子分成上下两格（像「日」字）：左根矮（y7.7 起）、
-/// 右根高（y4.6 起），两根都落到 y17.9，横分隔左低右高。
-/// 🔴 已用 PIL 逐像素描摹参考图 + 矢量渲染对比确认轮廓比例一致。
-private struct EqualizerGlyph: Shape {
-    /// 圆角 90° 圆弧的贝塞尔系数（r=1 时）。
+/// 音效「圆角方框 + 空心五角星」（2026-11-25 最新参考图）：
+/// 外层是一个四角微圆的方框（几乎占满 24×24 画布），正中一枚空心五角星，
+/// 星尖朝上、内凹比约 0.45，笔画与外框同线宽同圆角。
+private struct SoundEffectStarBoxGlyph: Shape {
     private let k: CGFloat = 0.5522847498
 
     func path(in rect: CGRect) -> Path {
         let b = GlyphBox(rect: rect)
         var p = Path()
-        // ── L 形坐标轴 ──
-        p.move(to: b.p(3.4, 3.0))
-        p.addLine(to: b.p(3.4, 20.6))
-        p.addLine(to: b.p(21.0, 20.6))
-        // ── 两根推子（左矮右高） ──
-        addFader(&p, b, x0: 5.35, y0: 7.7, x1: 10.85, y1: 17.9, mid: 13.2)
-        addFader(&p, b, x0: 13.2, y0: 4.6, x1: 18.7, y1: 17.9, mid: 9.3)
-        return p
-    }
-
-    /// 一个封闭圆角矩形 + 一条横分隔线。
-    private func addFader(_ p: inout Path, _ b: GlyphBox,
-                          x0: CGFloat, y0: CGFloat,
-                          x1: CGFloat, y1: CGFloat, mid: CGFloat) {
-        let r: CGFloat = 1.4
+        // ── 外框：x2.6…21.4 / y2.6…21.4，圆角 1.4 ──
+        let x0: CGFloat = 2.6, y0: CGFloat = 2.6
+        let x1: CGFloat = 21.4, y1: CGFloat = 21.4
+        let r: CGFloat = 1.1
         p.move(to: b.p(x0 + r, y0))
         p.addLine(to: b.p(x1 - r, y0))
         p.addCurve(to: b.p(x1, y0 + r),
@@ -225,8 +210,18 @@ private struct EqualizerGlyph: Shape {
                    control1: b.p(x0, y0 + r - k * r),
                    control2: b.p(x0 + r - k * r, y0))
         p.closeSubpath()
-        p.move(to: b.p(x0, mid))
-        p.addLine(to: b.p(x1, mid))
+        // ── 中央空心五角星：10 个顶点，外/内半径交替，起笔在正上方 ──
+        let cx: CGFloat = 12.0, cy: CGFloat = 12.1
+        let outer: CGFloat = 5.1, inner: CGFloat = 2.25
+        for i in 0..<10 {
+            let radius = i % 2 == 0 ? outer : inner
+            let a = Double(-90 + i * 36) * .pi / 180.0
+            let point = b.p(cx + radius * CGFloat(cos(a)),
+                            cy + radius * CGFloat(sin(a)))
+            if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
+        }
+        p.closeSubpath()
+        return p
     }
 }
 

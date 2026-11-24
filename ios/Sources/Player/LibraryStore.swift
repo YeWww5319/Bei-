@@ -144,6 +144,72 @@ final class LibraryStore: ObservableObject {
         remember(favorites + downloads + localSongs + history)
     }
 
+    // MARK: 歌曲权威档案
+
+    /// 🔴 2026-11-25(一) 根因：酷狗云歌单的「裸解析」/ 后台补齐偶尔只给得出歌手名
+    ///    （甚至空串），把这样的 Song 直接存进 favorites 后，列表行就只剩「贺一航」
+    ///    这种歌手名、没有歌名 —— 用户反馈「取消收藏再收藏就不显示歌名，重进歌单才恢复」。
+    ///    根因链路：列表行红心 → `toggleFavorite(脏Song)` → 脏实例写进收藏表 +
+    ///    didAdd 通知把脏实例插到首行 + pin 住 → 后台快照被 pin 覆盖，重进页面才从
+    ///    云端重新解析出干净歌名。
+    ///    正解：所有进入收藏表 / 通知 / 档案的数据先过 `canonicalSong`，档案只留干净实例，
+    ///    渲染层再做一个 O(1) 兜底。
+    private func isDirtyTitle(_ song: Song) -> Bool {
+        let t = song.cleanTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let a = song.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty || a.isEmpty { return true }
+        // 歌手名被当成歌名（含互相包含的变体，例如「贺一航」/「贺一航 - 请先说你好」）
+        if t == a || a.contains(t) || t.contains(a) { return true }
+        return false
+    }
+
+    /// 标题「可信度」打分：有歌名 > 歌名不像歌手名 > 有歌手名。
+    private func titleScore(_ s: Song) -> Int {
+        let t = s.cleanTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let a = s.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        var score = 0
+        if !t.isEmpty { score += 2 }
+        let looksLikeArtistName = !a.isEmpty && (t == a || a.contains(t) || t.contains(a))
+        if !t.isEmpty && !looksLikeArtistName { score += 2 }
+        if !a.isEmpty { score += 1 }
+        return score
+    }
+
+    /// 同 id 的两个实例谁更权威：可信度高的 > 低的；都干净时保留附带信息更全的那个。
+    private func isBetter(_ candidate: Song, than old: Song) -> Bool {
+        let cDirty = isDirtyTitle(candidate)
+        let oDirty = isDirtyTitle(old)
+        if cDirty != oDirty { return !cDirty }
+        if cDirty { return titleScore(candidate) > titleScore(old) }
+        let score: (Song) -> Int = { s in
+            (s.album.isEmpty ? 0 : 1) + (s.artworkURL == nil ? 0 : 1)
+            + (s.duration > 0 ? 1 : 0) + (s.kugouAlbumID.isEmpty ? 0 : 1)
+        }
+        return score(candidate) > score(old)
+    }
+
+    /// 把脏 Song 补成已知的完整实例。只在「脏」时扫内存池，供点击收藏 / 通知这类
+    /// 低频路径使用，绝不进列表每行的渲染热路径（那会变成 O(行数×收藏数)）。
+    func canonicalSong(for song: Song) -> Song {
+        guard isDirtyTitle(song) else { return song }
+        if let cached = songCache[song.id], !isDirtyTitle(cached) { return cached }
+        for pool in [favorites, history, downloads, localSongs] {
+            if let hit = pool.first(where: { $0.id == song.id && !isDirtyTitle($0) }) {
+                return hit
+            }
+        }
+        return song
+    }
+
+    /// 列表行渲染用的 O(1) 兜底：只按 id 查档案字典，绝不线性扫描。
+    /// 干净行直接返回自己的歌名（只有两次 trim，零额外开销）。
+    func displayTitle(for song: Song) -> String {
+        guard isDirtyTitle(song),
+              let cached = songCache[song.id],
+              !isDirtyTitle(cached) else { return song.cleanTitle }
+        return cached.cleanTitle
+    }
+
     // MARK: 收藏
 
     func isFavorite(_ song: Song) -> Bool {
@@ -233,16 +299,20 @@ final class LibraryStore: ObservableObject {
 
     @discardableResult
     func toggleFavorite(_ song: Song) -> Bool {
+        // 🔴 2026-11-25：先把云端裸解析的脏实例补成档案里的完整实例。
+        //    取消/再收藏时若把「只有歌手名」的 Song 写回收藏表并置顶，列表就永远
+        //    显示不出歌名，必须重进歌单重新拉数据（用户连续三轮反馈的老问题）。
+        let canonical = canonicalSong(for: song)
         if let index = favorites.firstIndex(where: { $0.id == song.id }) {
             // 取消收藏：本地移除 + 从酷狗「默认收藏」歌单移除（fire-and-forget）
             favorites.remove(at: index)
             persist(favorites, key: key("favorites"))
-            KugouFavoriteSync.shared.songUnfavorited(song)
+            KugouFavoriteSync.shared.songUnfavorited(canonical)
             // 🔴 2026-11-23(一)：通知带整个 Song（不再只带 id）—— 歌单页按
             //    「id / 歌名+歌手」双判据移除，兼容实例 id 不一致的变体。
             //    同时把该歌所有已知 id 变体都记进排除集合，杜绝重进后从云端刷出来。
-            excludeVariants(of: song)
-            NotificationCenter.default.post(name: .auroraFavoriteDidRemove, object: song)
+            excludeVariants(of: canonical)
+            NotificationCenter.default.post(name: .auroraFavoriteDidRemove, object: canonical)
             // 🔴 2026-11-22(五)：通知播放页/迷你条刷新当前歌红心（去掉残留红心）。
             NotificationCenter.default.post(name: .auroraFavoriteDidChange, object: song.id)
             return false
@@ -253,18 +323,19 @@ final class LibraryStore: ObservableObject {
             NotificationCenter.default.post(name: .auroraShowKugouLogin, object: nil)
             return isFavorite(song)  // 保持原状态（此处必为 false）
         }
-        favorites.insert(song, at: 0)
+        favorites.insert(canonical, at: 0)
         // 🔴 2026-11-23(一)：清掉这首歌所有已知 id 变体的排除标记（不同页面实例 id 不一致）。
-        unexcludeVariants(of: song)
+        unexcludeVariants(of: canonical)
         persist(Array(excludedFavoriteIDs), key: key("favExcluded"))
         persist(favorites, key: key("favorites"))
-        remember(song)
+        remember(canonical)
         // 🔴 v2.7.7：收藏自动同步到酷狗「默认收藏」歌单（fire-and-forget）
-        KugouFavoriteSync.shared.songFavorited(song)
+        KugouFavoriteSync.shared.songFavorited(canonical)
         // 🔴 2026-11-22(六)：通知「默认收藏」页把这首歌重新插回列表 + 详情缓存 ——
         //    之前取消收藏时把行从缓存里物理删除了，重新收藏只清了 excluded 集合，
         //    缓存里没有这一行 → 再进默认收藏页就不显示（用户实测反馈）。
-        NotificationCenter.default.post(name: .auroraFavoriteDidAdd, object: song)
+        //    ⚠️ 2026-11-25：通知必须带 canonical，否则首行会被脏实例顶掉歌名。
+        NotificationCenter.default.post(name: .auroraFavoriteDidAdd, object: canonical)
         // 🔴 2026-11-22(五)：通知播放页/迷你条刷新当前歌红心。
         NotificationCenter.default.post(name: .auroraFavoriteDidChange, object: song.id)
         return true
@@ -401,9 +472,20 @@ final class LibraryStore: ObservableObject {
 
     private func remember(_ songs: [Song]) {
         guard !songs.isEmpty else { return }
-        for song in songs { songCache[song.id] = song }
-        persist(songCache, key: key("songTable"))
+        // 🔴 2026-11-25：档案只留「更完整」的实例。之前裸解析晚到会直接覆盖掉
+        //    已经存好的干净歌名，导致收藏/列表随后拿到脏数据（不显示歌名）。
+        var changed = false
+        for song in songs {
+            if let old = songCache[song.id], !isBetter(song, than: old) { continue }
+            songCache[song.id] = song
+            changed = true
+        }
+        if changed { persist(songCache, key: key("songTable")) }
     }
+
+    /// 详情页拿到云端完整解析 / enrich 结果后，把干净实例沉淀进档案。
+    /// ⚠️ 只在主线程调用（load() 是 @MainActor，后台批次要 await MainActor.run）。
+    func learnSongs(_ songs: [Song]) { remember(songs) }
 
     // MARK: 历史
 
