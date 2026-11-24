@@ -1098,6 +1098,10 @@ struct KugouPlaylistDetail: View {
     @AppStorage("aurora.playlist.sortMode") private var sortModeRaw = PlaylistSortMode.custom.rawValue
     private var sortMode: PlaylistSortMode { PlaylistSortMode(rawValue: sortModeRaw) ?? .custom }
     private var sortListKey: String { "kg:\(listid)" }
+    /// 🔴 2026-11-24(七)：列表内容版本号。每次 `songs` 被替换/删改都 +1，
+    ///    作为 SongRow.rowToken 的一部分，让 `.equatable()` 在闭包捕获的
+    ///    displaySongs 快照过期时强制重建对应行（不会点第二首播第一首）。
+    @State private var listVersion = 0
     /// 🔴 列表、播放全部、点歌播放、多选全选、下载全部一律用这份排序后的数组，
     ///    一处排序处处生效（KugouPlaylistDetail 加载时已把服务端顺序反转成「新歌在前」）。
     private var displaySongs: [Song] {
@@ -1124,27 +1128,34 @@ struct KugouPlaylistDetail: View {
     ///    根本不写回 song.artworkURL。所以这里改为【同步查 CoverResolver 登记表】拿第一首封面，
     ///    并把第一首的 fallbackKeys 传给头图 CoverImage 兜底（见下方 hero / heroFallbackKeys）。
     private var firstSong: Song? { displaySongs.first }
+    /// 歌曲列表是否已就位。头图只在就位后才开始找第一首歌的封面。
+    private var heroReady: Bool { firstSong != nil }
 
     private var heroURL: URL? {
-        if let first = firstSong {
-            if let art = first.artworkURL { return art }
-            // 列表行能显示封面 = CoverResolver 里已登记过这张图（key 为 kg:hash / al:id）
-            if let resolved = CoverResolver.shared.firstAvailable(first.coverFallbackKeys) { return resolved }
-            // ⚠️ 关键：还没登记时返回 nil，让头图 CoverImage 走 fallbackKeys 联网 resolve
-            //    第一首封面；如果这里直接返回歌单封面 URL，CoverImage 的「url 优先」
-            //    会跳过 resolve，导致头图永远是书法封面（用户实测问题根因）。
+        guard let first = firstSong else {
+            // 🔴 2026-11-24(七)：歌曲还没加载出来时绝不先用歌单自带封面顶上。
+            //    那个封面是服务端歌单封面（多为正序第一首/书法图），倒序进页面会
+            //    「先闪一下旧封面 → 再切成列表第一首封面」，用户连续反馈的中间态。
+            //    现在加载中只显示渐变占位，等列表就位后一次性显示正确封面。
             return nil
         }
-        // 歌曲还没加载出来时，才先用歌单自带封面顶上。
-        if let coverURL, let url = URL(string: coverURL) { return url }
+        if let art = first.artworkURL { return art }
+        // 列表行能显示封面 = CoverResolver 里已登记过这张图（key 为 kg:hash / al:id）
+        if let resolved = CoverResolver.shared.firstAvailable(first.coverFallbackKeys) { return resolved }
+        // ⚠️ 关键：还没登记时返回 nil，让头图 CoverImage 走 fallbackKeys 联网 resolve
+        //    第一首封面；如果这里直接返回歌单封面 URL，CoverImage 的「url 优先」
+        //    会跳过 resolve，导致头图永远是书法封面（用户实测问题根因）。
         return nil
     }
 
-    /// 头图兜底键：第一首歌的 hash/专辑 id 优先（能 resolve 出真实专辑图），歌单自己的 key 兜底。
+    /// 头图兜底键：**只**用列表第一首歌的 hash/专辑 id。
+    /// 🔴 2026-11-24(七)：去掉末尾的 `kg-list:<listid>`。列表页进详情页时这个
+    ///    歌单封面 key 往往已经登记在 CoverResolver，CoverImage 的
+    ///    `firstAvailable(fallbackKeys)` / `cachedImageCandidates()` 会先命中它 →
+    ///    头图先画歌单封面，等第一首歌封面 resolve 回来再切一次（倒序时两张不同）。
+    ///    去掉后未登记期间保持渐变占位，到位即显示列表第一首，全程只有一张图。
     private var heroFallbackKeys: [String] {
-        var keys = firstSong?.coverFallbackKeys ?? []
-        keys.append("kg-list:\(listid)")
-        return keys
+        firstSong?.coverFallbackKeys ?? []
     }
 
     var body: some View {
@@ -1152,11 +1163,13 @@ struct KugouPlaylistDetail: View {
             state: headerState,
             // 🔴 加入第一首歌 id：歌曲异步加载完 / 封面登记完成后，第一首会变化 →
             //    浮层 rootView 重建一次，CoverImage 才能用新的 fallbackKeys 去 resolve 真实封面。
-            heroKey: "\(heroURL?.absoluteString ?? "-")|\(name)|\(songs.count)|\(firstSong?.id ?? "-")",
+            heroKey: "\(heroURL?.absoluteString ?? "-")|\(name)|\(firstSong?.id ?? "-")|\(heroReady ? 1 : 0)|\(songs.count)",
             hero: {
                 ImmersiveCoverHero(
                     url: heroURL,
-                    fallbackKeys: heroFallbackKeys,
+                    // 🔴 加载中不传任何 fallbackKey：CoverImage 就不会从登记表里
+                    //    提前捞出歌单封面（见 heroFallbackKeys 注释），只画渐变占位。
+                    fallbackKeys: heroReady ? heroFallbackKeys : [],
                     seed: name,
                     title: name,
                     subtitle: "酷狗歌单",
@@ -1196,6 +1209,7 @@ struct KugouPlaylistDetail: View {
             }
             withAnimation(.easeOut(duration: 0.2)) {
                 songs.removeAll(where: same)
+                listVersion += 1
             }
             // 🔴 2026-11-23(三)根因修复：**绝不物理删除 detailCache**。
             //    之前删掉后，如果用户退出详情页、在播放页/搜索页取消再收藏，
@@ -1227,7 +1241,7 @@ struct KugouPlaylistDetail: View {
             rebuilt.insert(added, at: 0)
             Self.detailCache[listid] = rebuilt
             PlaylistSortMemo.shared.invalidate(sortListKey)
-            withAnimation(.easeOut(duration: 0.2)) { songs = rebuilt }
+            withAnimation(.easeOut(duration: 0.2)) { songs = rebuilt; listVersion += 1 }
         }
         .sheet(isPresented: $showKugouPicker) {
             KugouPlaylistPicker(songs: songs, title: "加入我的酷狗歌单")
@@ -1293,6 +1307,7 @@ struct KugouPlaylistDetail: View {
                 // 🔴 2026-11-08：后加入的歌排第一（一次加多首时最后加的排最前），
                 //    与 KugouRecentAdditions 的记录顺序保持一致。
                 songs = Array(fresh.reversed()) + songs
+                listVersion += 1
                 Self.detailCache[listid] = songs
             }
             Haptics.light()
@@ -1467,21 +1482,31 @@ struct KugouPlaylistDetail: View {
 
     @ViewBuilder
     private var content: some View {
-        // 🔴 只算一次：ForEach 里逐行再算会让 576 首歌单的排序缓存比较被执行几百遍。
+        // 🔴 2026-11-24(七)：排序结果/行数据/列表数组在每次 body 只取一次。
+        //    旧代码 `displaySongs` 在 isEmpty、count-1、onPlay 里各算一遍，
+        //    `displayRows` 和 `letterIndexInfo` 又各走一次排序缓存 —— 播放器状态
+        //    每秒刷新 body 时这些都在主线程反复跑。
         //    变量名不能叫 index —— ForEach(enumerated) 的索引参数会把它遮蔽成 Int。
-        let letterInfo = letterIndexInfo
+        let rows = displayRows
+        let total = rows.count
+        let list = displaySongs
+        // 只有 A–Z 排序才需要字母索引；其它排序 anchors 恒为空，不必每次取缓存。
+        let letterInfo: (letters: [String], anchors: [String: String], rowLetters: [String]) =
+            PlaylistLetterIndex.isActive(sortMode)
+                ? letterIndexInfo
+                : (letters: [String](), anchors: [String: String](), rowLetters: [String]())
         if isLoading {
             ListRowsSkeleton(rows: 6).padding(.top, 20)
         } else if let err = errorMsg {
             EmptyStateView(icon: "exclamationmark.triangle", title: "加载失败", message: err).padding(.top, 60)
-        } else if displaySongs.isEmpty {
+        } else if rows.isEmpty {
             EmptyStateView(icon: "music.note.list", title: "歌单是空的").padding(.top, 60)
         } else {
             // 🔴 2026-11-09：VStack → LazyVStack。576 首的「我喜欢」之前一进页面就把
             //    576 行全部构建出来（还带 SwipeToDeleteRow / contextMenu），主线程直接卡死。
             //    Lazy 后只构建可见的十几行；占位 / 分隔线随行一起懒加载。
             LazyVStack(spacing: 0) {
-                ForEach(displayRows, id: \.element.id) { index, song in
+                ForEach(rows, id: \.element.id) { index, song in
                     let selected = selectedIDs.contains(song.id)
                     // 🔴 2026-11-12：每组首字母第一首歌放一个 0 高度锚点，
                     //    供右侧字母条 scrollTo 定位（不改任何列表布局）。
@@ -1508,12 +1533,17 @@ struct KugouPlaylistDetail: View {
                                     isPlaying: store.isPlaying,
                                     artistFontSize: 11,
                                     trailing: nil,
+                                    // 🔴 2026-11-24(七)：显式 rowToken 让 .equatable() 真正生效。
+                                    //    token 编码了 onPlay 闭包捕获的全部易变状态：行号、
+                                    //    多选开关/选中态、列表版本号、排序方式 —— 任一项变了
+                                    //    就重建该行，闭包不会过期（不会点第二首却播第一首）。
+                                    rowToken: "\(song.id)|\(index)|\(isSelecting ? 1 : 0)|\(selected ? 1 : 0)|\(listVersion)|\(sortModeRaw)",
                                     onPlay: {
                                         if isSelecting {
                                             if selected { selectedIDs.remove(song.id) } else { selectedIDs.insert(song.id) }
                                         } else {
                                             store.setQueueOrigin(id: "kugou-list:\(listid)", title: name)
-                                            store.play(displaySongs, startAt: index); Haptics.soft()
+                                            store.play(list, startAt: index); Haptics.soft()
                                         }
                                     })
                                 .equatable().songMenu(song)
@@ -1533,7 +1563,7 @@ struct KugouPlaylistDetail: View {
                             Label("移出歌单", systemImage: "trash")
                         }
                     }
-                    if index < displaySongs.count - 1 {
+                    if index < total - 1 {
                         // 🔴 2026-11-15：用户要求「下划线改短一点，歌曲图片下面不要、
                         //    滑动条那里也不要」。上一轮从 120pt 直接改到 16pt（从封面下穿过、
                         //    一直顶到右侧索引条）过头了；现在起点回到封面右沿
@@ -1555,6 +1585,7 @@ struct KugouPlaylistDetail: View {
             try await KugouClient.shared.removeSongFromPlaylist(listid, song: song)
             withAnimation(.easeOut(duration: 0.2)) {
                 songs.removeAll { $0.id == song.id }
+                listVersion += 1
                 // 🔴 v2.8.3：同步进详情缓存，否则重进页面又会看到被删的歌
                 Self.detailCache[listid] = songs
             }
@@ -1654,6 +1685,7 @@ struct KugouPlaylistDetail: View {
         let cached = Self.mergingPinnedFavorite(withoutExcludedFavorites(Self.detailCache[listid] ?? []), listid: listid)
         if !cached.isEmpty {
             songs = cached
+            listVersion += 1
             isLoading = false
             Self.syncDefaultFavorites(cached, name: name)
             // 缓存还新鲜 → 直接用，完全不重新加载
@@ -1676,6 +1708,7 @@ struct KugouPlaylistDetail: View {
             // 🔴 v2.9.5：刚存进来的歌排到第一位（其余保持上面的倒序）
             let ordered = Self.mergingPinnedFavorite(KugouRecentAdditions.shared.ordered(merged, forListID: listid), listid: listid)
             songs = ordered
+            listVersion += 1
             Self.detailCache[listid] = ordered
             Self.cacheTime[listid] = Date()
             // 🔴 2026-11-15：默认收藏是云端收藏歌单，歌曲并入本地收藏，红心才会同步变红。
@@ -1699,6 +1732,7 @@ struct KugouPlaylistDetail: View {
                         listid: listid)
                     Self.detailCache[listid] = snapped
                     songs = snapped
+                    listVersion += 1
                 }
                 let finalOrdered = Self.mergingPinnedFavorite(
                     withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(final, forListID: listid)),
@@ -1709,6 +1743,7 @@ struct KugouPlaylistDetail: View {
                 let finalIDs = Set(finalOrdered.map(\.id))
                 let fresh = songs.filter { !finalIDs.contains($0.id) }
                 songs = fresh + finalOrdered
+                listVersion += 1
             }
         } catch {
             // 🔴 v2.8.2：取消类错误不显示成「加载失败：已取消」

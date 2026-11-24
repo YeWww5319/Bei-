@@ -1573,14 +1573,17 @@ struct QualityTag: View {
 
 struct SongRow: View {
     let song: Song
-    /// 🔴 3.0.0：订阅下载状态，下载完成后「本地」标签能立刻出现。
-    @ObservedObject private var downloads = DownloadManager.shared
     var isCurrent: Bool = false
     var isPlaying: Bool = false
     var showsCover: Bool = true
     /// 歌手名字号（歌单页要求 11pt，其它列表默认 13pt）
     var artistFontSize: CGFloat = 13
     var trailing: AnyView?
+    /// 🔴 2026-11-24(七)：显式「行缓存令牌」。只有传了非空 token 的调用点，
+    ///    `.equatable()` 才会真正跳过重建；token 必须编码 onPlay 闭包捕获的
+    ///    全部易变状态（行号/多选/列表版本/排序），否则闭包过期会点错歌。
+    ///    不传（空串）时保持旧行为 —— 一律不缓存，兼容其它页面。
+    var rowToken: String = ""
     /// 🔴 2026-11-09(二)：播放动作改由 SongRow **内部**绑在「封面+歌名」这一块上。
     /// 之前调用方普遍在整行挂 `.onTapGesture { play(song) }`，而三点竖是 UIKit
     /// 的 Menu 交互，不消费 SwiftUI 的 TapGesture —— 点「更多」时父手势照样识别成功，
@@ -1595,6 +1598,7 @@ struct SongRow: View {
          showsCover: Bool = true,
          artistFontSize: CGFloat = 13,
          trailing: AnyView? = nil,
+         rowToken: String = "",
          onPlay: (() -> Void)? = nil) {
         self.song = song
         self.isCurrent = isCurrent
@@ -1602,15 +1606,8 @@ struct SongRow: View {
         self.showsCover = showsCover
         self.artistFontSize = artistFontSize
         self.trailing = trailing
+        self.rowToken = rowToken
         self.onPlay = onPlay
-    }
-
-    /// 🔴 3.0.0：本地歌曲或下载完成的网络歌曲都算「已下载」。
-    /// 只查内存里的下载索引，不做磁盘 fileExists —— 几百首的大歌单每行都读磁盘会卡。
-    private var isLocalSong: Bool {
-        // 🔴 2026-11-23(二)：走 O(1) 索引（旧 item(for:) 在 hash 变体时线性扫全表，
-        //    574 首歌单滚动每行 O(n) → 掉帧）。
-        song.source == .local || downloads.isDoneFast(song)
     }
 
     var body: some View {
@@ -1670,9 +1667,12 @@ struct SongRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .layoutPriority(1)
-                    if isLocalSong {
-                        LocalTag()
-                    }
+                    // 🔴 2026-11-24(七)：下载订阅下沉到这个独立小视图。
+                    //    之前 SongRow 自己 @ObservedObject DownloadManager ——
+                    //    items 一发布（下载进度/索引重建），整行 body 全部重算
+                    //    （封面、跑马灯、菜单跟着重建），大歌单滑动必掉帧。
+                    //    现在只有这个小标签会刷新，行主体完全不受影响。
+                    LocalTagIfNeeded(song: song)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -1681,6 +1681,19 @@ struct SongRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+}
+
+/// 「本地」标签独立小视图：只有它订阅 DownloadManager。
+/// 🔴 只查 O(1) 内存索引，不做磁盘 fileExists（几百首大歌单每行读磁盘会卡）。
+private struct LocalTagIfNeeded: View {
+    let song: Song
+    @ObservedObject private var downloads = DownloadManager.shared
+
+    var body: some View {
+        if song.source == .local || downloads.isDoneFast(song) {
+            LocalTag()
+        }
     }
 }
 
@@ -1906,17 +1919,21 @@ struct AddSelectedToKugouButton<ButtonContent: View>: View {
 /// trailing 是 AnyView 不走等式比较（trailing 频繁变化本身就是信号，说明 Cell 应该重建）。
 extension SongRow: Equatable {
     static func == (lhs: SongRow, rhs: SongRow) -> Bool {
-        // 🔴 传了 onPlay 的行一律不缓存：闭包捕获 index / 多选状态 / 当前列表，
-        //    EquatableView 跳过重建会让闭包过期 → 点第二首却播第一首、多选切换后仍播放。
-        //    大列表走 LazyVStack 只渲染可见行，这里放弃缓存不会造成卡顿。
-        guard lhs.onPlay == nil, rhs.onPlay == nil else { return false }
-        return lhs.song.id == rhs.song.id
+        // 🔴 2026-11-24(七) 卡顿根因：旧版「传了 onPlay 就一律返回 false」，
+        //    歌单页每行都传 onPlay → `.equatable()` 完全失效。播放器状态每刷新
+        //    一次 body，所有可见行（封面 / 跑马灯 UIView / 更多菜单）全部重建。
+        //    现在改为：调用方显式传 rowToken（编码 index / 多选 / 列表版本 /
+        //    排序方式），token 相同即认为闭包未过期 → 允许跳过重建。
+        //    没传 token 的旧调用点保持「一律不缓存」，行为不变。
+        if lhs.onPlay != nil || rhs.onPlay != nil {
+            guard !lhs.rowToken.isEmpty, lhs.rowToken == rhs.rowToken else { return false }
+        }
+        return lhs.song == rhs.song
         && lhs.isCurrent == rhs.isCurrent
         && lhs.isPlaying == rhs.isPlaying
         && lhs.showsCover == rhs.showsCover
         && lhs.artistFontSize == rhs.artistFontSize
-        // 下载完成时也要让 Equatable 判定不等，否则「本地」标签要等下次刷新才出现。
-        && lhs.isLocalSong == rhs.isLocalSong
+        && lhs.rowToken == rhs.rowToken
     }
 }
 

@@ -15,8 +15,8 @@ enum PlayerActionGlyph {
     case translate  // 翻译（「文」字骨架）
     case more       // 更多（三个实心圆点，竖排）
     case downloaded // 已下载（同款下载外框，角标「已下载」）
-    case soundEffect // 音效（唱片：外圆+内圆+两条弧线，Lucide disc-3）— 2026-11-22(四) 按参考图
-    case source     // 音源（圆角方框 + 顶部书签带 M 形凹口）— 2026-11-24(六) 按参考图
+    case soundEffect // 音效（L 形坐标轴 + 两根「日」字推子，左矮右高）— 2026-11-24(七) 按参考图
+    case source     // 音源（甲虫 bug，Lucide bug）— 2026-11-24(七) 按参考图
 }
 
 /// 统一规格的动作图标：24×24 画布坐标 → 实际 size，线宽随 size 等比缩放。
@@ -58,8 +58,10 @@ struct PlayerActionIcon: View {
                     QualityRings().stroke(tint, style: stroke)
                 }
             case .soundEffect:
-                // 🔴 2026-11-22(四)：按参考图改成唱片（外圆 + 内圆 + 两条弧线，Lucide disc-3）。
-                LucideIcon(icon: .disc3, size: size, color: tint)
+                // 🔴 2026-11-24(七)：按最新参考图改成「均衡器推子」——
+                //    左侧 L 形坐标轴 + 两根竖直圆角推子（各有一条横分隔，左矮右高）。
+                //    自绘保证与动作行同一线宽/圆头，逐像素描摹过参考图。
+                EqualizerGlyph().stroke(tint, style: stroke)
             case .lyric:
                 // 大圆角正方形外框 + 中间「词」字（参考图 6ccb467 同款）
                 ZStack {
@@ -78,9 +80,10 @@ struct PlayerActionIcon: View {
                 //    「已下载」弹窗提示区分（见 PlayerView.classicDownloadButton）。
                 LucideIcon(icon: .squareArrowDownEnter, size: size, color: tint)
             case .source:
-                // 🔴 2026-11-24(六)：音源按钮按最新参考图换成「书签收纳盒」——
-                //    圆角方框 + 顶部中间书签（底部 M 形凹口）。自绘保证与动作行同一线宽/圆头。
-                SourceBoxGlyph().stroke(tint, style: stroke)
+                // 🔴 2026-11-24(七)：音源按钮按最新参考图换回「甲虫」——
+                //    椭圆身体中间竖线 + 头顶两触角 + 两侧各三腿，Lucide bug。
+                //    与收藏/下载同为 Lucide 图标，线宽/画布一致，整排齐平。
+                LucideIcon(icon: .bug, size: size, color: tint)
             }
         }
         .frame(width: size, height: size)
@@ -177,50 +180,55 @@ private struct DownloadArrow: Shape {
     }
 }
 
-/// 音源「书签收纳盒」（2026-11-24(六) 最新参考图）：
-/// 圆角方框（x3.2..21 / y3.6..21，圆角 r≈2.2）+ 顶部中间一条书签/绶带：
-/// 两条竖线从顶边垂下（x11.6 / x17.1，y3.2→11.4），底部一个 M/V 形凹口（尖角 y9.0）。
-/// 🔴 已用 PIL 逐像素描摹 + 矢量渲染对比确认形状与参考图一致。
-private struct SourceBoxGlyph: Shape {
+/// 音效「均衡器推子」（2026-11-24(七) 最新参考图）：
+/// 左侧一条 L 形坐标轴（竖 x3.4 / 底横 y20.6 → x21），框内两根竖直圆角推子，
+/// 每根中间一条横分隔把推子分成上下两格（像「日」字）：左根矮（y7.7 起）、
+/// 右根高（y4.6 起），两根都落到 y17.9，横分隔左低右高。
+/// 🔴 已用 PIL 逐像素描摹参考图 + 矢量渲染对比确认轮廓比例一致。
+private struct EqualizerGlyph: Shape {
+    /// 圆角 90° 圆弧的贝塞尔系数（r=1 时）。
+    private let k: CGFloat = 0.5522847498
+
     func path(in rect: CGRect) -> Path {
         let b = GlyphBox(rect: rect)
         var p = Path()
-        // ── 圆角方框 x3.2..21, y3.6..21, 圆角 r≈2.2 ──
-        let xL: CGFloat = 3.2, xR: CGFloat = 21.0
-        let yT: CGFloat = 3.6, yB: CGFloat = 21.0, r: CGFloat = 2.2
-        p.move(to: b.p(xL + r, yT))
-        p.addLine(to: b.p(xR - r, yT))
-        // 右上圆角
-        p.addCurve(to: b.p(xR, yT + r),
-                   control1: b.p(xR - r + kSourceBox, yT),
-                   control2: b.p(xR, yT + r - kSourceBox))
-        p.addLine(to: b.p(xR, yB - r))
-        // 右下圆角
-        p.addCurve(to: b.p(xR - r, yB),
-                   control1: b.p(xR, yB - r + kSourceBox),
-                   control2: b.p(xR - r + kSourceBox, yB))
-        p.addLine(to: b.p(xL + r, yB))
-        // 左下圆角
-        p.addCurve(to: b.p(xL, yB - r),
-                   control1: b.p(xL + r - kSourceBox, yB),
-                   control2: b.p(xL, yB - r + kSourceBox))
-        p.addLine(to: b.p(xL, yT + r))
-        // 左上圆角
-        p.addCurve(to: b.p(xL + r, yT),
-                   control1: b.p(xL, yT + r - kSourceBox),
-                   control2: b.p(xL + r - kSourceBox, yT))
-        p.closeSubpath()
-        // ── 书签：左竖线顶→底，斜上到中间尖角，斜下到右底，右竖线底→顶 ──
-        p.move(to: b.p(11.6, 3.2))
-        p.addLine(to: b.p(11.6, 11.4))
-        p.addLine(to: b.p(14.35, 9.0))
-        p.addLine(to: b.p(17.1, 11.4))
-        p.addLine(to: b.p(17.1, 3.2))
+        // ── L 形坐标轴 ──
+        p.move(to: b.p(3.4, 3.0))
+        p.addLine(to: b.p(3.4, 20.6))
+        p.addLine(to: b.p(21.0, 20.6))
+        // ── 两根推子（左矮右高） ──
+        addFader(&p, b, x0: 5.35, y0: 7.7, x1: 10.85, y1: 17.9, mid: 13.2)
+        addFader(&p, b, x0: 13.2, y0: 4.6, x1: 18.7, y1: 17.9, mid: 9.3)
         return p
     }
+
+    /// 一个封闭圆角矩形 + 一条横分隔线。
+    private func addFader(_ p: inout Path, _ b: GlyphBox,
+                          x0: CGFloat, y0: CGFloat,
+                          x1: CGFloat, y1: CGFloat, mid: CGFloat) {
+        let r: CGFloat = 1.4
+        p.move(to: b.p(x0 + r, y0))
+        p.addLine(to: b.p(x1 - r, y0))
+        p.addCurve(to: b.p(x1, y0 + r),
+                   control1: b.p(x1 - r + k * r, y0),
+                   control2: b.p(x1, y0 + r - k * r))
+        p.addLine(to: b.p(x1, y1 - r))
+        p.addCurve(to: b.p(x1 - r, y1),
+                   control1: b.p(x1, y1 - r + k * r),
+                   control2: b.p(x1 - r + k * r, y1))
+        p.addLine(to: b.p(x0 + r, y1))
+        p.addCurve(to: b.p(x0, y1 - r),
+                   control1: b.p(x0 + r - k * r, y1),
+                   control2: b.p(x0, y1 - r + k * r))
+        p.addLine(to: b.p(x0, y0 + r))
+        p.addCurve(to: b.p(x0 + r, y0),
+                   control1: b.p(x0, y0 + r - k * r),
+                   control2: b.p(x0 + r - k * r, y0))
+        p.closeSubpath()
+        p.move(to: b.p(x0, mid))
+        p.addLine(to: b.p(x1, mid))
+    }
 }
-/// 圆角 90° 圆弧的贝塞尔系数（与 DownloadGlyph 同一套）。
-private let kSourceBox: CGFloat = 0.5522847498
 
 /// 音质（参考图 43f7「静噪强音」同款）：
 /// **大圆环 + 左上/右下两处缺口 + 缺口处各悬一个空心小圆 + 中心 N 形波形**
