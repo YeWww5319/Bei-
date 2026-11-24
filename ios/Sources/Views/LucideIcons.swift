@@ -106,6 +106,7 @@ enum Lucide: String, CaseIterable {
     case squareArrowDownEnter  // 🔴 2026-11-22(五) 动作行·下载（顶部开口方框+向下进入箭头，Lucide square-arrow-down-enter）
     case listPlus  // 🔴 2026-11-22(五) 音源弹窗·导入按钮（列表+加号，Lucide list-plus）
     case listRestart  // 🔴 2026-11-22(五) 音源弹窗·检测按钮（列表+旋转箭头，Lucide list-restart）
+    case chartPie  // 🔴 2026-11-25 动作行·音效（圆 + 右上四分之一扇形，Lucide chart-pie）
 
     /// 在给定 rect 内构造该图标的 Path（描边路径，未闭合填充由调用方决定）。
     func path(in rect: CGRect) -> Path {
@@ -1537,6 +1538,29 @@ enum Lucide: String, CaseIterable {
             p.move(to: g.p(11.000, 10.000))
             p.addLine(to: g.p(11.000, 14.000))
             p.addLine(to: g.p(15.000, 14.000))
+
+        case .chartPie:  // 🔴 2026-11-25 音效·饼图 — chart-pie（圆 + 右上四分之一扇形）
+            // 按 lucide-icons/icons/chart-pie.svg 的 24×24 几何重绘：圆心 (12,12)、半径 10。
+            // 外弧从 22.9° 顺时针扫到 246.4°（右上角留缺口），扇形从圆心向上到 12 点、
+            // 沿 -90°→0° 圆弧到 3 点、再水平回圆心；两段之间各留约 23° 间隙。
+            // 🔴 不用 Path.addArc（SwiftUI 的 clockwise 语义容易把大弧画反），
+            //    用 80/30 段采样折线，圆滑度足够且与矢量源完全一致。
+            let cx: CGFloat = 12, cy: CGFloat = 12, r: CGFloat = 10
+            var started = false
+            for i in 0...80 {
+                let deg = 22.9 + (246.4 - 22.9) * Double(i) / 80.0
+                let a = deg * .pi / 180.0
+                let pt = g.p(cx + r * CGFloat(cos(a)), cy + r * CGFloat(sin(a)))
+                if !started { p.move(to: pt); started = true } else { p.addLine(to: pt) }
+            }
+            p.move(to: g.p(12, 12))
+            p.addLine(to: g.p(12, 2))
+            for i in 1...30 {
+                let deg = -90.0 + 90.0 * Double(i) / 30.0
+                let a = deg * .pi / 180.0
+                p.addLine(to: g.p(cx + r * CGFloat(cos(a)), cy + r * CGFloat(sin(a))))
+            }
+            p.addLine(to: g.p(12, 12))
 
         }
         return p

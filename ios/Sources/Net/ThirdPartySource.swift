@@ -77,7 +77,8 @@ struct ThirdPartySource: Identifiable, Codable, Hashable {
         return keys.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
-    /// 是否随安装包内置的音源（官方内置脚本）。列表里这类音源统一显示为「默认音源」，不暴露脚本名。
+    /// 是否随安装包内置的音源（官方内置脚本）。列表里这类音源按序号显示为
+    /// 「默认音源1」「默认音源2」……，不暴露脚本名。
     var isBundled: Bool = false
 
     var requiresAPIKey: Bool {
@@ -233,14 +234,19 @@ final class SourceStore: ObservableObject {
         sources.filter { $0.enabled && $0.isUsable }
     }
 
-    /// 🔴 2026-11-25：多个内置音源按列表顺序编号显示，不暴露脚本文案。
-    ///    第 1 个「默认音源」、第 2 个「默认音源2」……；用户拖动排序后编号跟着
-    ///    当前顺序走。非内置音源照旧显示自己的名字。
+    /// 🔴 2026-11-25（二改）：多个内置音源按列表顺序编号显示，不暴露脚本文案。
+    ///    统一「默认音源1」「默认音源2」……（用户要求第一个也带编号 1，不要省略）；
+    ///    用户拖动排序后编号跟着当前顺序走。非内置音源照旧显示自己的名字。
     func displayName(for source: ThirdPartySource) -> String {
         guard source.isBundled else { return source.name }
         let builtins = sources.filter { $0.isBundled }
         let ordinal = (builtins.firstIndex(where: { $0.id == source.id }) ?? 0) + 1
-        return ordinal == 1 ? "默认音源" : "默认音源\(ordinal)"
+        // 前两个写成完整字面量：编号不会被插值拆开，交付包里也能直接校验文案。
+        switch ordinal {
+        case 1: return "默认音源1"
+        case 2: return "默认音源2"
+        default: return "默认音源\(ordinal)"
+        }
     }
 
     /// 🔴 2026-11-19：当前使用的音源（解析优先级最高的第一个可用音源）。
@@ -330,7 +336,7 @@ final class SourceStore: ObservableObject {
 
     /// 🔴 2026-11-25：新装第二个内置音源时，`insertBuiltinFront` 会把新源插到最前，
     ///    结果「默认音源2」反而成了第一优先级。这里按包内文件名字典序把内置音源之间的
-    ///    相对顺序对齐（第 1 个 = 默认音源，第 2 个 = 默认音源2），且只占原来的槽位、
+    ///    相对顺序对齐（第 1 个 = 默认音源1，第 2 个 = 默认音源2），且只占原来的槽位、
     ///    不动用户手动导入的其它音源。只在有新增时调用一次，之后用户自己拖动的优先级
     ///    不会被反复覆盖。
     func alignBuiltinOrder(_ orderedNames: [String]) {

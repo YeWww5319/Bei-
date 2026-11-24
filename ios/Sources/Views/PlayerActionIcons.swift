@@ -15,7 +15,7 @@ enum PlayerActionGlyph {
     case translate  // 翻译（「文」字骨架）
     case more       // 更多（三个实心圆点，竖排）
     case downloaded // 已下载（同款下载外框，角标「已下载」）
-    case soundEffect // 音效（圆角方框 + 空心五角星）— 2026-11-25 按参考图
+    case soundEffect // 音效（圆 + 右上四分之一扇形，Lucide chart-pie）— 2026-11-25(二) 按参考图
     case source     // 音源（甲虫 bug，Lucide bug）— 2026-11-24(七) 按参考图
 }
 
@@ -58,9 +58,10 @@ struct PlayerActionIcon: View {
                     QualityRings().stroke(tint, style: stroke)
                 }
             case .soundEffect:
-                // 🔴 2026-11-25：按最新参考图改成「圆角方框 + 中央空心五角星」。
-                //    外框与星形同线宽、同圆头圆角，沿用 24×24 全局画布。
-                SoundEffectStarBoxGlyph().stroke(tint, style: stroke)
+                // 🔴 2026-11-25(二)：按参考图换成 Lucide chart-pie「饼图」——
+                //    一个带右上缺口的圆 + 右上四分之一扇形。与收藏/下载/音源同为
+                //    Lucide 图标：同一 24×24 画布、同一 1.5pt 线宽，整排齐平。
+                LucideIcon(icon: .chartPie, size: size, color: tint)
             case .lyric:
                 // 大圆角正方形外框 + 中间「词」字（参考图 6ccb467 同款）
                 ZStack {
@@ -175,52 +176,6 @@ private struct DownloadArrow: Shape {
         p.move(to: b.p(DownloadGlyph.wingLeftX, DownloadGlyph.wingTopY))
         p.addLine(to: b.p(DownloadGlyph.arrowX, DownloadGlyph.arrowTipY))
         p.addLine(to: b.p(DownloadGlyph.wingRightX, DownloadGlyph.wingTopY))
-        return p
-    }
-}
-
-/// 音效「圆角方框 + 空心五角星」（2026-11-25 最新参考图）：
-/// 外层是一个四角微圆的方框（几乎占满 24×24 画布），正中一枚空心五角星，
-/// 星尖朝上、内凹比约 0.45，笔画与外框同线宽同圆角。
-private struct SoundEffectStarBoxGlyph: Shape {
-    private let k: CGFloat = 0.5522847498
-
-    func path(in rect: CGRect) -> Path {
-        let b = GlyphBox(rect: rect)
-        var p = Path()
-        // ── 外框：x2.6…21.4 / y2.6…21.4，圆角 1.4 ──
-        let x0: CGFloat = 2.6, y0: CGFloat = 2.6
-        let x1: CGFloat = 21.4, y1: CGFloat = 21.4
-        let r: CGFloat = 1.1
-        p.move(to: b.p(x0 + r, y0))
-        p.addLine(to: b.p(x1 - r, y0))
-        p.addCurve(to: b.p(x1, y0 + r),
-                   control1: b.p(x1 - r + k * r, y0),
-                   control2: b.p(x1, y0 + r - k * r))
-        p.addLine(to: b.p(x1, y1 - r))
-        p.addCurve(to: b.p(x1 - r, y1),
-                   control1: b.p(x1, y1 - r + k * r),
-                   control2: b.p(x1 - r + k * r, y1))
-        p.addLine(to: b.p(x0 + r, y1))
-        p.addCurve(to: b.p(x0, y1 - r),
-                   control1: b.p(x0 + r - k * r, y1),
-                   control2: b.p(x0, y1 - r + k * r))
-        p.addLine(to: b.p(x0, y0 + r))
-        p.addCurve(to: b.p(x0 + r, y0),
-                   control1: b.p(x0, y0 + r - k * r),
-                   control2: b.p(x0 + r - k * r, y0))
-        p.closeSubpath()
-        // ── 中央空心五角星：10 个顶点，外/内半径交替，起笔在正上方 ──
-        let cx: CGFloat = 12.0, cy: CGFloat = 12.1
-        let outer: CGFloat = 5.1, inner: CGFloat = 2.25
-        for i in 0..<10 {
-            let radius = i % 2 == 0 ? outer : inner
-            let a = Double(-90 + i * 36) * .pi / 180.0
-            let point = b.p(cx + radius * CGFloat(cos(a)),
-                            cy + radius * CGFloat(sin(a)))
-            if i == 0 { p.move(to: point) } else { p.addLine(to: point) }
-        }
-        p.closeSubpath()
         return p
     }
 }

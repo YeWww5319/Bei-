@@ -26,12 +26,12 @@ enum BundledSources {
     /// 🔴 2026-11-18：按用户要求，移除原来的 2 个内置音源（星澜聚合音源 0_xinglan.js、
     ///    洛雪音源6 luoxue.js），换成用户提供的「星海音乐源」v3.2.20
     ///    （文件名 0_gaopin.js，GDAPI 聚合 + ChKSz，作者 万去了了/科学大魔王）。
-    ///    列表里这类音源统一显示「默认音源」，不暴露脚本文案。
+    ///    列表里这类音源按序号显示「默认音源1」「默认音源2」，不暴露脚本文案。
     /// 🔴 2026-11-25：用户要求再加一个「默认音源2」—— 洛雪音源6(2).js
     ///    （脚本头 @name K×H测试 v1.7.17，MIT，多源聚合 + 多链路回退）。
     ///    文件名用 1_kxh.js（不能用 luoxue，那个名字在 retiredScriptNames 里被硬拦），
     ///    显示名不能叫「洛雪音源6」（legacyBundledNames 会在启动时把它清掉）。
-    ///    文件名字典序决定列表顺序：0_gaopin = 默认音源，1_kxh = 默认音源2。
+    ///    文件名字典序决定列表顺序：0_gaopin = 默认音源1，1_kxh = 默认音源2。
     private static let known: [Preset] = [
         Preset(scriptName: "0_gaopin",
               displayName: "星海高品音源",
@@ -133,7 +133,7 @@ enum BundledSources {
         let presets = available
         var added = 0
         // 逆序遍历 available + 新增源插到最前，保证最终顺序与 available 一致。
-        // 🔴 2026-11-25：包内 2 个内置音源（0_gaopin → 默认音源、1_kxh → 默认音源2），
+        // 🔴 2026-11-25：包内 2 个内置音源（0_gaopin → 默认音源1、1_kxh → 默认音源2），
         //    按文件名顺序串行解析，第一个成功者胜出，第二个作备用链路。
         //    逆序插入只对「全是新增」成立；老用户已有 0_gaopin、只新增 1_kxh 时
         //    会插到最前，所以下面有新增时再按 presets 顺序对齐一次。
