@@ -27,6 +27,13 @@ struct QualitySettingsView: View {
 
     /// 当前使用的音源（最高优先级可用音源）。
     private var currentSource: ThirdPartySource? { sourceStore.currentSource }
+    /// 🔴 2026-11-25：内置音源统一走带序号的显示名（默认音源1 / 默认音源2），
+    ///    这里原来直接取 `source.name`，会把「星海高品音源」这类脚本内部名露给用户，
+    ///    也和第三方音源设置页的文案对不上。
+    private var currentSourceName: String {
+        guard let source = currentSource else { return "未知音源" }
+        return sourceStore.displayName(for: source)
+    }
     /// 当前音源支持的档位；检测不到标记时回退到全部可选档位。
     private var supportedQualities: [MusicQuality] {
         let list = currentSource?.supportedQualities ?? []
@@ -124,7 +131,7 @@ struct QualitySettingsView: View {
                                 .foregroundStyle(accent)
                         }
                     }
-                    Text("当前音源：\(currentSource?.name ?? "未知音源")")
+                    Text("当前音源：\(currentSourceName)")
                         .font(.system(size: 12))
                         .foregroundStyle(textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
