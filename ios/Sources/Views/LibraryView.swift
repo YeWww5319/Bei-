@@ -1645,7 +1645,12 @@ struct KugouPlaylistDetail: View {
         return out
     }
 
-    private func load() async {
+    /// 🔴 2026-11-24(六)闪退根因修复：本函数所有 `songs`/`isLoading`/`errorMsg` 都是 @State，
+    ///    旧代码是非隔离 async —— `.task { await load() }` 里 await 续跑落到协作线程池（后台），
+    ///    后台写 @State → SwiftUI 后台改 AutoLayout → NSInternalInconsistencyException 崩溃。
+    ///    崩溃日志正是「574 首歌单封面补齐后 + 海量封面下载」时崩。标 @MainActor 收敛到主线程；
+    ///    网络请求/反查/enrich 仍由 KugouClient 在后台完成，await 期间不阻塞主线程。
+    @MainActor private func load() async {
         let cached = Self.mergingPinnedFavorite(withoutExcludedFavorites(Self.detailCache[listid] ?? []), listid: listid)
         if !cached.isEmpty {
             songs = cached

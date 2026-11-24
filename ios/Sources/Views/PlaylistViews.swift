@@ -442,7 +442,8 @@ struct PlaylistDetailView: View {
         Haptics.soft()
     }
 
-    private func load() async {
+    /// 🔴 2026-11-24(六)：await 后续跑在后台，写 @State 会触发后台 AutoLayout 崩溃 → @MainActor。
+    @MainActor private func load() async {
         if localPlaylist != nil { return }
         if let initialSongs, !initialSongs.isEmpty {
             songs = initialSongs
@@ -804,7 +805,8 @@ struct AlbumDetailView: View {
         Haptics.soft()
     }
 
-    private func load() async {
+    /// 🔴 2026-11-24(六)：await 后续跑在后台，写 @State 会触发后台 AutoLayout 崩溃 → @MainActor。
+    @MainActor private func load() async {
         isLoading = true
         defer { isLoading = false }
         // 用 "{artist} {album}" 组合关键词搜索，从结果里过滤出专辑名精确匹配的歌曲

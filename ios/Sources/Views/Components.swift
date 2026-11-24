@@ -799,7 +799,13 @@ struct CoverImage: View {
         return "k:" + fallbackKeys.joined(separator: ",") + "|" + size.description
     }
 
-    private func load() async {
+    /// 🔴 2026-11-24(六)闪退根因修复：本函数在 `.task { await load() }` 里调用，
+    ///    nonisolated async 的 await 续跑在协作线程池（后台）——旧代码在后台写 `image`
+    ///    (@State)，SwiftUI 从后台改 AutoLayout 引擎 → NSInternalInconsistencyException
+    ///    「Modifications to the layout engine must not be performed from a background
+    ///    thread」崩溃（574 首歌单海量封面补齐时必现）。标 @MainActor 让整个函数体
+    ///    （含 await 续跑）都在主线程；网络/解码仍由 CoverLoader 在后台完成，不阻塞。
+    @MainActor private func load() async {
         // 直连地址和登记表都没有时，尝试按 key 联网补一次（al:专辑id / kg:歌曲hash）。
         let primary = effectiveURL
         var target = primary
@@ -834,7 +840,8 @@ struct CoverImage: View {
         image = LocalArtwork.fallbackImage()
     }
 
-    private func loadFrom(_ target: URL) async -> Bool {
+    /// 🔴 2026-11-24(六)：同 load()，写 `image`(@State) 必须在主线程，标 @MainActor。
+    @MainActor private func loadFrom(_ target: URL) async -> Bool {
         // 大图解码上限 1200px：375pt@3x 约需 1125px，够清晰又不至于
         // 解出 2400px 的巨型位图（项目「大图限尺寸解码」红线）。
         let maxPixel: CGFloat = hiRes ? min(size * 3, 1200) : size * 3
@@ -1263,7 +1270,7 @@ struct ArtistPhotoBackdrop: View {
             key = info.singername
             if !info.songname.isEmpty { titleKey = info.songname }
         }
-        guard !key.isEmpty else { images = []; return }
+        guard !key.isEmpty else { await MainActor.run { images = [] }; return }
 
         // 🔴 2026-11-18：切歌不再无条件 images=[] 露出底层取色渐变。
         //  ① 新歌手的写真已在内存缓存（播放时 ArtistPhotoPrefetcher 已预取）→ 同步秒显；
@@ -1291,8 +1298,8 @@ struct ArtistPhotoBackdrop: View {
             // 确实拿不到这位歌手的写真：此刻才清空，交给调用方兜底，
             // 不永久挂着上一首的写真。
             Log.info("歌词写真", "没取到歌手写真：\(key)")
-            images = []
-            currentIndex = 0
+            // 🔴 2026-11-24(六)：写真解码留后台，但 @State 写入必须回主线程（后台写 → 后台改 AutoLayout → 闪退）。
+            await MainActor.run { images = []; currentIndex = 0 }
             return
         }
 
@@ -1303,19 +1310,21 @@ struct ArtistPhotoBackdrop: View {
         if let first = await CoverLoader.downloadPhoto(picked[0], maxPixelSize: Self.decodeMaxPixel) {
             let sharp = Self.sharpened(first, context: context)
             loaded.append(sharp)
-            images = loaded
-            // 🔴 新写真第一张到手：索引必须归零，否则沿用上一首的轮播位置会指向不存在的位置 = 空白。
-            currentIndex = 0
+            // 🔴 2026-11-24(六)：@State 写入回主线程（CI 锐化仍在后台做）。
+            await MainActor.run {
+                images = loaded
+                // 🔴 新写真第一张到手：索引必须归零，否则沿用上一首的轮播位置会指向不存在的位置 = 空白。
+                currentIndex = 0
+            }
         }
         for url in picked.dropFirst() {
             guard let ui = await CoverLoader.downloadPhoto(url, maxPixelSize: Self.decodeMaxPixel) else { continue }
             loaded.append(Self.sharpened(ui, context: context))
-            images = loaded
+            await MainActor.run { images = loaded }
         }
         if loaded.isEmpty {
             // 所有写真都下载失败：此刻才清空（兜底），不永久挂上一首的写真。
-            images = []
-            currentIndex = 0
+            await MainActor.run { images = []; currentIndex = 0 }
             return
         }
         ArtistPhotoCache.shared.store(loaded, for: key)
@@ -1354,7 +1363,8 @@ struct ArtistPhotoBackdrop: View {
     // MARK: 轮播
 
     /// 每 8 秒淡入下一张写真；暂停/离开页面时随 task 取消而停止。
-    private func rotate() async {
+    /// 🔴 2026-11-24(六)：写 `currentIndex`(@State) 必须在主线程，标 @MainActor。
+    @MainActor private func rotate() async {
         while !Task.isCancelled {
             do {
                 try await Task.sleep(nanoseconds: rotateInterval)

@@ -710,7 +710,8 @@ struct RankingsView: View {
         }
     }
 
-    private func load() async {
+    /// 🔴 2026-11-24(六)：await 后续跑在后台，写 @State 会触发后台 AutoLayout 崩溃 → @MainActor。
+    @MainActor private func load() async {
         isLoading = true
         errorMsg = nil
         defer { isLoading = false }

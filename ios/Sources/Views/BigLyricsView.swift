@@ -320,8 +320,12 @@ struct BigLyricsView: View {
     }
 
     private func textSize(isActive: Bool, isPicked: Bool) -> CGFloat {
-        if isPicked { return LyricsFontScale.activeBase + 5 }   // 中心行再放大一档
-        if isActive { return LyricsFontScale.activeBase }
+        // 🔴 2026-11-23(五)：滑动选中后点播放锁定的那一行（isPicked=isLocked），
+        //    此前是 activeBase+5=27pt，比正常播放高亮的 activeBase=22pt 大一号。
+        //    用户要求「滑动选择后播放的歌词」也和播放高亮一样大 → 两者统一 activeBase。
+        //    （activeIdx = lockedIndex ?? currentIndex，锁定行本身 isActive 也为 true，
+        //      故 isPicked / isActive 同档即可，weight 也统一走 isActive 的 .bold。）
+        if isActive || isPicked { return LyricsFontScale.activeBase }
         return LyricsFontScale.inactiveBase
     }
 

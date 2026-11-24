@@ -16,7 +16,7 @@ enum PlayerActionGlyph {
     case more       // 更多（三个实心圆点，竖排）
     case downloaded // 已下载（同款下载外框，角标「已下载」）
     case soundEffect // 音效（唱片：外圆+内圆+两条弧线，Lucide disc-3）— 2026-11-22(四) 按参考图
-    case source     // 音源（盒盖 + 圆角盒身 + U 形笑脸）— 2026-11-23(四) 按参考图
+    case source     // 音源（圆角方框 + 顶部书签带 M 形凹口）— 2026-11-24(六) 按参考图
 }
 
 /// 统一规格的动作图标：24×24 画布坐标 → 实际 size，线宽随 size 等比缩放。
@@ -78,8 +78,8 @@ struct PlayerActionIcon: View {
                 //    「已下载」弹窗提示区分（见 PlayerView.classicDownloadButton）。
                 LucideIcon(icon: .squareArrowDownEnter, size: size, color: tint)
             case .source:
-                // 🔴 2026-11-23(四)：音源按钮按最新参考图换成「笑脸收纳盒」——
-                //    顶部梯形盖 + 圆角盒身 + 盒内 U 形笑脸。自绘保证与动作行同一线宽/圆头。
+                // 🔴 2026-11-24(六)：音源按钮按最新参考图换成「书签收纳盒」——
+                //    圆角方框 + 顶部中间书签（底部 M 形凹口）。自绘保证与动作行同一线宽/圆头。
                 SourceBoxGlyph().stroke(tint, style: stroke)
             }
         }
@@ -177,16 +177,17 @@ private struct DownloadArrow: Shape {
     }
 }
 
-/// 音源「笑脸收纳盒」（2026-11-23(四) 参考图）：
-/// 顶部一条梯形盖（上沿短、下沿宽的梯形，收在盒身顶边上方）+ 圆角盒身 + 盒内 U 形笑脸。
-/// 参考图像素量得：外框约 x3..21 / y2..21；盖在 y2..6；笑脸在 y10..15 居中。
+/// 音源「书签收纳盒」（2026-11-24(六) 最新参考图）：
+/// 圆角方框（x3.2..21 / y3.6..21，圆角 r≈2.2）+ 顶部中间一条书签/绶带：
+/// 两条竖线从顶边垂下（x11.6 / x17.1，y3.2→11.4），底部一个 M/V 形凹口（尖角 y9.0）。
+/// 🔴 已用 PIL 逐像素描摹 + 矢量渲染对比确认形状与参考图一致。
 private struct SourceBoxGlyph: Shape {
     func path(in rect: CGRect) -> Path {
         let b = GlyphBox(rect: rect)
         var p = Path()
-        // ── 盒身：圆角矩形 x3..21, y6..21, 圆角 r≈2.4 ──
-        let xL: CGFloat = 3.0, xR: CGFloat = 21.0
-        let yT: CGFloat = 6.2, yB: CGFloat = 21.0, r: CGFloat = 2.4
+        // ── 圆角方框 x3.2..21, y3.6..21, 圆角 r≈2.2 ──
+        let xL: CGFloat = 3.2, xR: CGFloat = 21.0
+        let yT: CGFloat = 3.6, yB: CGFloat = 21.0, r: CGFloat = 2.2
         p.move(to: b.p(xL + r, yT))
         p.addLine(to: b.p(xR - r, yT))
         // 右上圆角
@@ -208,20 +209,13 @@ private struct SourceBoxGlyph: Shape {
         p.addCurve(to: b.p(xL + r, yT),
                    control1: b.p(xL, yT + r - kSourceBox),
                    control2: b.p(xL + r - kSourceBox, yT))
-        // ── 顶部梯形盖：上沿 x7..17 @ y2，下沿 x3..21 @ y6，四条斜边闭合成扁梯形 ──
-        p.move(to: b.p(7.2, 2.2))
-        p.addLine(to: b.p(16.8, 2.2))
-        p.addLine(to: b.p(20.2, 5.8))
-        p.addLine(to: b.p(3.8, 5.8))
         p.closeSubpath()
-        // ── 盒内 U 形笑脸：两端 y10.5 居中 x12，弧底 y15 ──
-        p.move(to: b.p(9.0, 10.6))
-        p.addCurve(to: b.p(12.0, 15.0),
-                   control1: b.p(9.4, 13.6),
-                   control2: b.p(10.3, 15.0))
-        p.addCurve(to: b.p(15.0, 10.6),
-                   control1: b.p(13.7, 15.0),
-                   control2: b.p(14.6, 13.6))
+        // ── 书签：左竖线顶→底，斜上到中间尖角，斜下到右底，右竖线底→顶 ──
+        p.move(to: b.p(11.6, 3.2))
+        p.addLine(to: b.p(11.6, 11.4))
+        p.addLine(to: b.p(14.35, 9.0))
+        p.addLine(to: b.p(17.1, 11.4))
+        p.addLine(to: b.p(17.1, 3.2))
         return p
     }
 }
