@@ -1729,6 +1729,16 @@ struct KugouPlaylistDetail: View {
         return added + input
     }
 
+    /// 🔴 2026-11-26(三)：给「自建歌单」列表行封面用的**权威首曲**。
+    ///    和详情页 displaySongs 走完全相同的补齐逻辑（本地收藏置顶 + pinned + 排除取消项），
+    ///    保证「列表缩略图 == 详情页第一行封面」，且收藏后不进详情页也能立刻拿到新首曲。
+    static func firstDisplaySong(listid: String, name: String) -> Song? {
+        let base = detailCache[listid] ?? []
+        return mergingLocalFavorites(
+            mergingPinnedFavorite(base, listid: listid),
+            name: name).first
+    }
+
     /// 🔴 2026-11-24(六)闪退根因修复：本函数所有 `songs`/`isLoading`/`errorMsg` 都是 @State，
     ///    旧代码是非隔离 async —— `.task { await load() }` 里 await 续跑落到协作线程池（后台），
     ///    后台写 @State → SwiftUI 后台改 AutoLayout → NSInternalInconsistencyException 崩溃。
@@ -1740,6 +1750,9 @@ struct KugouPlaylistDetail: View {
             name: name)
         if !cached.isEmpty {
             songs = cached
+            // 🔴 2026-11-26：把「本地收藏补齐后」的列表回写缓存，让列表行封面
+            //    拿到的 first 与详情页首行一致（新收藏的歌立刻顶到首行）。
+            Self.detailCache[listid] = cached
             listVersion += 1
             isLoading = false
             // 🔴 2026-11-25：把已解析好的完整实例沉淀进歌曲档案，供收藏 / 行渲染兜底。
@@ -2030,6 +2043,10 @@ private struct PlaylistFirstCover: View {
 
     @State private var info = CoverInfo()
     @State private var loaded = false
+    /// 🔴 2026-11-26：收藏增删时自增，强制 .task 重跑（同一个歌单 id 不会自己重跑）。
+    @State private var refreshToken: UInt64 = 0
+
+    private var taskID: String { "\(playlist.id)|\(refreshToken)" }
 
     private var resolvedURL: URL? {
         if loaded { return info.art ?? fallbackURL }
@@ -2048,12 +2065,18 @@ private struct PlaylistFirstCover: View {
         CoverImage(url: resolvedURL,
                    fallbackKeys: effectiveFallbackKeys,
                    seed: playlist.name, size: 54, corner: 8)
-            .task(id: playlist.id) {
-                // 🔴 优先复用详情页缓存：它存的是「已排序 + 已 enrich」的歌曲，
-                //    first 正是列表第一行那首（服务端顺序 ≠ 列表倒序，直接用 playlistSongs().first 会选错歌）。
-                //    实时读取（不只看 checked）：用户点进详情页返回后 detailCache 已填充，
-                //    列表行重建 .task 重跑时能拿到最新第一首，封面随即刷新为正确那张。
-                let cachedFirst = KugouPlaylistDetail.detailCache[playlist.id]?.first
+            .task(id: taskID) {
+                // 🔴 2026-11-26(三)：「默认收藏」以本地收藏表为权威首曲 —— 和详情页
+                //    displaySongs 同一套补齐逻辑（新收藏置顶 + 排除取消项），所以用户在
+                //    播放页点红心后，列表页还开着也能第一时间换成新首曲的封面，不必先进详情页。
+                //    其它歌单仍用详情页缓存（已按倒序排好），没有缓存才翻到服务端末页。
+                let cachedFirst: Song?
+                if playlist.name == "默认收藏" {
+                    cachedFirst = KugouPlaylistDetail.firstDisplaySong(
+                        listid: playlist.id, name: playlist.name)
+                } else {
+                    cachedFirst = KugouPlaylistDetail.detailCache[playlist.id]?.first
+                }
                 let existing = Self.cached(playlist.id)
                 let firstID = cachedFirst?.id ?? ""
 
@@ -2093,8 +2116,23 @@ private struct PlaylistFirstCover: View {
                         newInfo.art = await CoverResolver.shared.resolveCover(for: keys)
                     }
                 }
+                // 🔴 2026-11-26：notify 触发 refreshToken 变化时旧 task 会被取消，
+                //    这里挡住它晚到的结果，避免把「新首曲」的封面又覆盖回旧封面。
+                guard !Task.isCancelled else { return }
                 Self.store(playlist.id, info: newInfo)
                 await MainActor.run { info = newInfo; loaded = true }
+            }
+            // 🔴 2026-11-26：收藏 / 取消收藏（可能发生在播放页，列表页还开着）→
+            //    失效本行缓存并重跑 task，首曲变了缩略图立刻跟着换。
+            .onReceive(NotificationCenter.default.publisher(for: .auroraFavoriteDidAdd)) { _ in
+                guard playlist.name == "默认收藏" else { return }
+                Self.invalidate(playlist.id)
+                refreshToken &+= 1
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .auroraFavoriteDidRemove)) { _ in
+                guard playlist.name == "默认收藏" else { return }
+                Self.invalidate(playlist.id)
+                refreshToken &+= 1
             }
     }
 
@@ -2113,5 +2151,11 @@ private struct PlaylistFirstCover: View {
     private static func store(_ id: String, info: CoverInfo) {
         lock.lock(); defer { lock.unlock() }
         infoCache[id] = info
+    }
+    /// 🔴 2026-11-26：首曲变了要删掉旧解析结果，下次 task 会重新 resolve 新封面。
+    private static func invalidate(_ id: String) {
+        lock.lock(); defer { lock.unlock() }
+        infoCache[id] = nil
+        checked.remove(id)
     }
 }
