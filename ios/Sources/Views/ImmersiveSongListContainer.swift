@@ -367,6 +367,8 @@ private struct ImmersiveVisualChrome: View {
     let heroKey: String
     let hero: AnyView
     let sticky: AnyView
+    /// 🔴 2026-11-25(三)：浮层截图取样回报 → 顶栏 / 状态栏同步切色。
+    let onHeroLight: ((Bool) -> Void)?
 
     init(state: ImmersiveHeaderState, heroKey: String, hero: AnyView, sticky: AnyView) {
         self._state = ObservedObject(wrappedValue: state)
@@ -374,6 +376,7 @@ private struct ImmersiveVisualChrome: View {
         self.heroKey = heroKey
         self.hero = hero
         self.sticky = sticky
+        self.onHeroLight = { light in state.setHeroLight(light) }
     }
 
     var body: some View {
@@ -384,7 +387,8 @@ private struct ImmersiveVisualChrome: View {
                                headerHeight: state.headerHeight,
                                hideThreshold: state.maxDrag,
                                heroKey: heroKey,
-                               hero: hero)
+                               hero: hero,
+                               onHeroLight: onHeroLight)
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
 
@@ -559,6 +563,8 @@ private struct ImmersiveHeroLayer: UIViewRepresentable {
     let hideThreshold: CGFloat
     let heroKey: String
     let hero: AnyView
+    /// 🔴 2026-11-25(三)：浮层实际渲染结果的亮度回报（截图取样兜底）。
+    var onHeroLight: ((Bool) -> Void)? = nil
 
     func makeUIView(context: Context) -> AnchorView {
         let v = AnchorView()
@@ -566,11 +572,13 @@ private struct ImmersiveHeroLayer: UIViewRepresentable {
         v.hideThreshold = hideThreshold
         v.heroKey = heroKey
         v.heroRoot = hero
+        v.onHeroLight = onHeroLight
         return v
     }
 
     func updateUIView(_ uiView: AnchorView, context: Context) {
         uiView.scrolled = scrolled
+        uiView.onHeroLight = onHeroLight
         uiView.updateHero(key: heroKey, root: hero)
         // 🔴 2026-11-14 第十二轮：SwiftUI 偶尔会短暂把 Representable 拆掉又更新同一个
         //    UIView（列表刷新 / heroKey 变化）。若此时已被 dismantle 且不允许复活，
@@ -596,6 +604,9 @@ private struct ImmersiveHeroLayer: UIViewRepresentable {
         var heroKey: String = ""
         /// 最新的头图视图值：安装浮层时用它，避免「歌曲先加载完、浮层后挂上」漏掉封面。
         var heroRoot: AnyView?
+        /// 🔴 2026-11-25(三)：截图取样兜底回调（CoverImage 的加载回调漏触发时仍生效）。
+        var onHeroLight: ((Bool) -> Void)?
+        private var brightnessProbeGeneration = 0
 
         /// 🔴 头图身份变了才换 rootView（例如歌曲异步加载完、封面 URL 从 nil 变成有值）。
         ///    滚动时 key 不变 → 只改 frame，不重建 SwiftUI 视图树（封面不会闪）。
@@ -604,6 +615,28 @@ private struct ImmersiveHeroLayer: UIViewRepresentable {
             guard key != heroKey else { return }
             heroKey = key
             hosting?.rootView = root
+            // rootView 刚换过，旧的一次性取样结果作废，重新按新图判断。
+            scheduleBrightnessProbe()
+        }
+
+        /// 大图安装 / 换图后分几次取样：CoverImage 可能先画缓存小图、再换高清大图，
+        /// 只在首页静止（scrolled≈0）时取，完全不参与滚动路径。
+        private func scheduleBrightnessProbe() {
+            brightnessProbeGeneration += 1
+            let generation = brightnessProbeGeneration
+            for delay in [0.1, 0.45, 1.1, 2.4, 4.0] as [TimeInterval] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, self.brightnessProbeGeneration == generation else { return }
+                    self.probeRenderedBrightness()
+                }
+            }
+        }
+
+        private func probeRenderedBrightness() {
+            guard !tornDown, !popSliding, !popCovering, window != nil, isHostOnTop,
+                  scrolled < 6, let view = heroView, !view.isHidden,
+                  let light = HeroBrightness.renderedTopIsLight(view) else { return }
+            onHeroLight?(light)
         }
 
         private var heroView: UIView?
@@ -1005,6 +1038,9 @@ private struct ImmersiveHeroLayer: UIViewRepresentable {
                 // 都不能让大图永久隐藏。0.42s 略长于标准 push(0.35s)。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { reveal() }
             }
+            // 🔴 2026-11-25(三)：浮层装上后按渲染结果取样（首帧 0.1s 可能还在转场，
+            //    后面 0.45/1.1/2.4/4.0s 会覆盖封面异步到位的情况）。
+            scheduleBrightnessProbe()
         }
 
         func applyFrame() {

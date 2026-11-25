@@ -51,4 +51,27 @@ enum HeroBrightness {
         // 均值够亮 或 中位数很亮（少量深色文字不该把整张白图判成深色）。
         return mean >= 0.66 || median >= 0.78
     }
+
+    /// 🔴 2026-11-25(三)：直接截 UIKit 大图浮层来判亮度 —— 不依赖 CoverImage 的
+    /// 加载回调。UIHostingController.rootView 被替换 / 缓存首帧 / 浮层重装时，
+    /// SwiftUI 的 onAppear / task / onChange 都可能一次都不触发（真机两张白色封面
+    /// 截图顶栏始终白字）。屏幕上真正画出来的像素永远不会骗人。
+    ///
+    /// 输出 nil 表示当前还不能可靠取样（浮层还没上窗 / 尺寸为 0），调用方稍后重试。
+    static func renderedTopIsLight(_ view: UIView, fraction: CGFloat = 0.34) -> Bool? {
+        guard view.window != nil,
+              view.bounds.width > 8, view.bounds.height > 8 else { return nil }
+        // 等比缩到 72pt 宽再算，采样开销与屏幕尺寸无关。
+        let width: CGFloat = 72
+        let size = CGSize(width: width,
+                          height: max(8, width * view.bounds.height / view.bounds.width))
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let shot = renderer.image { ctx in
+            ctx.cgContext.scaleBy(x: size.width / view.bounds.width,
+                                  y: size.height / view.bounds.height)
+            view.drawHierarchy(in: CGRect(origin: .zero, size: view.bounds.size),
+                               afterScreenUpdates: false)
+        }
+        return topIsLight(shot, topFraction: fraction)
+    }
 }

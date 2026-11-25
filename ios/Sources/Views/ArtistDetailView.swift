@@ -148,7 +148,8 @@ struct ArtistDetailView: View {
                             // 🔴 2026-11-22(日)：写真 URL 异步回填后要靠 key 变化触发 UIKit 浮层
                             //    重建 hosted 大图（否则 makeUIView 捕获的初始 hero 永远不更新）。
                             heroKey: hiResCoverURL?.absoluteString ?? "",
-                            hero: AnyView(heroImageContent))
+                            hero: AnyView(heroImageContent),
+                            onHeroLight: { applyHeroLight($0) })
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
 
@@ -1092,6 +1093,8 @@ private struct ArtistHeroLayer: UIViewRepresentable {
     ///    解决「从播放页进歌手页，大图一开始是列表歌曲封面、写真到了却不换」的问题。
     let heroKey: String
     let hero: AnyView
+    /// 🔴 2026-11-25(三)：按浮层实际渲染结果判亮度（贴图加载回调漏触发时的兜底）。
+    var onHeroLight: ((Bool) -> Void)? = nil
 
     func makeUIView(context: Context) -> AnchorView {
         let v = AnchorView()
@@ -1099,11 +1102,13 @@ private struct ArtistHeroLayer: UIViewRepresentable {
         v.hideThreshold = hideThreshold
         v.heroKey = heroKey
         v.hero = hero
+        v.onHeroLight = onHeroLight
         return v
     }
 
     func updateUIView(_ uiView: AnchorView, context: Context) {
         uiView.scrolled = scrolled
+        uiView.onHeroLight = onHeroLight
         // 🔴 2026-11-22(日)：写真 URL 异步回填 → heroKey 变化 → 重建 hosted 大图。
         //    只在浮层已安装且未拆除时替换 rootView，不碰 nav 层级 / 滚动状态。
         uiView.updateHero(key: heroKey, hero: hero)
@@ -1126,6 +1131,9 @@ private struct ArtistHeroLayer: UIViewRepresentable {
         var hideThreshold: CGFloat = 262
         var heroKey: String = ""
         var hero: AnyView?
+        /// 🔴 2026-11-25(三)：浮层截图取样亮度回报。
+        var onHeroLight: ((Bool) -> Void)?
+        private var brightnessProbeGeneration = 0
 
         private var heroView: UIView?
         private var hosting: UIHostingController<AnyView>?
@@ -1153,6 +1161,24 @@ private struct ArtistHeroLayer: UIViewRepresentable {
             self.hero = hero
             // 已安装：就地换 rootView；未安装：installIfNeeded 会用最新 hero 首次构建。
             if !tornDown { hosting?.rootView = hero }
+            scheduleBrightnessProbe()
+        }
+
+        /// 🔴 2026-11-25(三)：写真加载回调可能一次都不来（浮层 rootView 被替换 /
+        ///    缓存首帧）。直接对屏幕上实际画出的大图取样，首帧和图片后到都覆盖。
+        private func scheduleBrightnessProbe() {
+            brightnessProbeGeneration += 1
+            let generation = brightnessProbeGeneration
+            for delay in [0.1, 0.45, 1.1, 2.4, 4.0] as [TimeInterval] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self, self.brightnessProbeGeneration == generation else { return }
+                    guard !self.tornDown, !self.popSliding, !self.popCovering,
+                          self.window != nil, self.isHostOnTop,
+                          self.scrolled < 6, let view = self.heroView, !view.isHidden,
+                          let light = HeroBrightness.renderedTopIsLight(view) else { return }
+                    self.onHeroLight?(light)
+                }
+            }
         }
         private weak var container: UIView?
         private weak var hostVC: UIViewController?
@@ -1451,6 +1477,8 @@ private struct ArtistHeroLayer: UIViewRepresentable {
             // 🔴 兜底：首帧常拿不到 transitionCoordinator；交互式取消 / completion
             //    不回调时也不能让大图永久隐藏。0.42s 略长于标准 push(0.35s)。
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) { reveal() }
+            // 🔴 2026-11-25(三)：浮层装好后按实际渲染像素取样（含 0.45s 后的转场窗口）。
+            scheduleBrightnessProbe()
         }
 
         func applyFrame() {
