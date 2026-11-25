@@ -751,6 +751,13 @@ struct CoverImage: View {
         onImageReady(img)
     }
 
+    /// 🔴 2026-11-25(二)：显示图的身份标识。UIImage 不 Equatable，用 ObjectIdentifier。
+    /// 亮度检测必须以「屏幕上真正显示的图」为准 —— 之前只挂在下载回调上，
+    /// 白色封面从列表缓存直接顶上（浮层 rootView 替换）时下载回调不触发 → 顶栏不切黑。
+    private var displayImageID: ObjectIdentifier? {
+        displayImage.map { ObjectIdentifier($0) }
+    }
+
     private var w: CGFloat { displayWidth ?? size }
     private var h: CGFloat { displayHeight ?? size }
 
@@ -790,12 +797,18 @@ struct CoverImage: View {
         }
         .frame(width: w, height: h)
         .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+        // 🔴 2026-11-25(二)：以「真正显示的图」为准回报亮度 —— 覆盖缓存首帧、
+        //    浮层 rootView 替换但 URL 未变、下载回调不触发等所有路径。
+        //    onChange/onAppear 都在主线程；未传 onImageReady 时 notify 立即返回。
+        .onAppear { notifyImageReady(displayImage) }
+        .onChange(of: displayImageID) { _ in notifyImageReady(displayImage) }
         // 🔴 2026-11-22：换歌/换 URL（taskKey 变化）时先清空上一首的图，
         //    避免新歌联网失败时 installFallbackIfNeeded() 因 image != nil 跳过
         //    → 迷你条继续显示上一首封面。清空与加载绑在同一 task，顺序可靠。
         .task(id: taskKey) {
             image = nil
-            // 缓存首帧（大图专用）也要立刻回报亮度，避免白色图先白字闪一下。
+            // 缓存首帧（大图专用）也回报一次亮度：和 onAppear/onChange 走同一个
+            // 去重的状态写入，谁先到都行，确保白色图一定被判定。
             if let cached = cachedPlaceholder { notifyImageReady(cached) }
             await load()
         }
