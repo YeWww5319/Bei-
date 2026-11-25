@@ -26,6 +26,9 @@ struct ArtistDetailView: View {
     ///    从播放页歌手名进来时 artist.coverURL 为 nil（不能再拿歌曲封面当歌手图），
     ///    进场后按歌手名拉真实写真；发现/搜索页 push 进来时已有 coverURL，直接用它，不重复拉。
     @State private var heroPhotoURL: URL? = nil
+    /// 🔴 2026-11-25：大图顶部是否浅色。白色写真上白字顶栏/状态栏会糊成一片，
+    ///    浅图时顶栏文字图标与状态栏一起切黑。只在图片就绪时写一次。
+    @State private var heroIsLight: Bool = false
 
     // 顶部 Tab：歌曲 / 专辑
     @State private var tab: Int = 0
@@ -165,8 +168,9 @@ struct ArtistDetailView: View {
         // 🔴 2026-11-07：系统返回按钮的 chevron 用全局 tintColor（蓝色），无法逐页改色。
         //    隐藏它、改由 .topBarLeading 自绘「‹ 返回」，颜色才能跟右侧三点一起动态切换。
         .navigationBarBackButtonHidden(true)
-        // 🔴 状态栏文字：大图在顶（深色）用白字；大图收起、毛玻璃浅底后改黑字。
-        .compatToolbarDynamicScheme(dark: AppStyle.isDarkTheme || navFrostOpacity < 0.5)
+        // 🔴 状态栏文字：大图在顶按大图明暗（深图白字 / 白图黑字）；
+        //    大图收起、毛玻璃浅底后改黑字。深色主题一律白字。
+        .compatToolbarDynamicScheme(dark: AppStyle.isDarkTheme || (navFrostOpacity < 0.5 && !heroIsLight))
         .kugouNavigationBarBackground(.clear, transparent: true)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -391,8 +395,20 @@ struct ArtistDetailView: View {
         // 🔴 2026-11-17：深色主题下毛玻璃是深色，收起后仍应是白字，
         //    不能按原来的白→黑线性插值把文字变成看不见的黑色。
         if AppStyle.isDarkTheme { return .white }
+        // 🔴 2026-11-25：白色大图顶部用黑字，与状态栏锚点同一判据。
+        if heroIsLight { return .black }
         let whiteness = 1 - navFrostOpacity   // 0=纯黑（收起）/ 1=纯白（展开）
         return Color(uiColor: UIColor(white: whiteness, alpha: 1))
+    }
+
+    /// 大图就绪后写亮度。CoverImage 的图片回调本身在主线程（@MainActor 加载链），
+    /// 这里保留跨线程兜底 — View 是 struct，闭包捕获值副本即可，不用 weak。
+    private func applyHeroLight(_ light: Bool) {
+        if Thread.isMainThread {
+            if heroIsLight != light { heroIsLight = light }
+        } else {
+            DispatchQueue.main.async { self.heroIsLight = light }
+        }
     }
 
     /// 🔴 吸顶头（分段 Tab + 全部播放）相对 ZStack 顶部的偏移。
@@ -470,7 +486,9 @@ struct ArtistDetailView: View {
                 // 🔴 大图专用：按 1200px 解码，且不读/不写共享小图缓存。
                 hiRes: true,
                 // 🔴 首帧先用列表里已缓存的歌手图顶上，高清到位后无感替换。
-                prefillCached: true
+                prefillCached: true,
+                // 🔴 2026-11-25：白色写真上顶栏/状态栏自动切黑字。
+                onImageReady: { applyHeroLight(HeroBrightness.topIsLight($0)) }
             )
             .frame(width: screenW, height: headerBaseHeight)
             .clipped()

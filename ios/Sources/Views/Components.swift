@@ -692,6 +692,9 @@ struct CoverImage: View {
     /// 🔴 只开启「首帧用缓存图顶上」，不改变下载链路（歌手页大图用，
     /// 它本来走共享缓存，只是 URL 升过尺寸、缓存里躺的是小尺寸版本）。
     var prefillCached: Bool = false
+    /// 🔴 2026-11-25：图片到位（含缓存首帧）回调，供沉浸式大图判断顶部亮度切顶栏字色。
+    /// 默认 nil，所有既有调用点行为完全不变。
+    var onImageReady: ((UIImage) -> Void)? = nil
 
     @State private var image: UIImage?
     @State private var resolved: URL?
@@ -741,6 +744,13 @@ struct CoverImage: View {
         image ?? ((hiRes || prefillCached) ? cachedPlaceholder : nil)
     }
 
+    /// 🔴 2026-11-25：每次真正显示的图变化时通知（含缓存首帧 / 高清替换），
+    /// 主线程回调；未传回调时零开销。
+    private func notifyImageReady(_ img: UIImage?) {
+        guard let img, let onImageReady else { return }
+        onImageReady(img)
+    }
+
     private var w: CGFloat { displayWidth ?? size }
     private var h: CGFloat { displayHeight ?? size }
 
@@ -785,6 +795,8 @@ struct CoverImage: View {
         //    → 迷你条继续显示上一首封面。清空与加载绑在同一 task，顺序可靠。
         .task(id: taskKey) {
             image = nil
+            // 缓存首帧（大图专用）也要立刻回报亮度，避免白色图先白字闪一下。
+            if let cached = cachedPlaceholder { notifyImageReady(cached) }
             await load()
         }
     }
@@ -846,11 +858,14 @@ struct CoverImage: View {
         // 解出 2400px 的巨型位图（项目「大图限尺寸解码」红线）。
         let maxPixel: CGFloat = hiRes ? min(size * 3, 1200) : size * 3
         if target.isFileURL, let data = try? Data(contentsOf: target) {
-            image = Self.decodeImageData(data, maxPixelSize: maxPixel)
-            return image != nil
+            let decoded = Self.decodeImageData(data, maxPixelSize: maxPixel)
+            image = decoded
+            notifyImageReady(decoded) // 🔴 2026-11-25：大图浅色判据
+            return decoded != nil
         }
         if let loaded = await fetch(target, maxPixelSize: maxPixel) {
             image = loaded
+            notifyImageReady(loaded)
             return true
         }
         guard !Task.isCancelled else { return false }
@@ -860,6 +875,7 @@ struct CoverImage: View {
         guard !Task.isCancelled else { return false }
         if let retry = await fetch(target, maxPixelSize: maxPixel) {
             image = retry
+            notifyImageReady(retry)
             return true
         }
         return false

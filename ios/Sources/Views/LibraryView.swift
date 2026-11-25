@@ -1174,7 +1174,8 @@ struct KugouPlaylistDetail: View {
                     title: name,
                     subtitle: "酷狗歌单",
                     detail: songs.isEmpty ? nil : "\(songs.count) 首",
-                    headerHeight: headerState.headerHeight
+                    headerHeight: headerState.headerHeight,
+                    onHeroLight: { headerState.setHeroLight($0) }
                 )
             },
             sticky: { actionBar },
@@ -1957,18 +1958,21 @@ extension Notification.Name {
     static let auroraFavoriteDidChange = Notification.Name("aurora.favoriteDidChange")
 }
 
-/// 🔴 2026-11-22(五)：歌单列表行封面 —— 优先显示「歌单第一首歌的专辑图」。
+/// 🔴 2026-11-25：歌单列表行封面 —— 显示「**倒序列表第一首**」的专辑图。
 ///
-/// 列表本身只有歌单元数据（songs 为空），第一首封面要按需请求。设计要点：
+/// 详情页把服务端歌曲整体 `reversed()`，所以「列表第一首」其实是服务端**最后一首**。
+/// 旧版拉 `firstPageOnly` 的第一首 → 列表显示正序第一张，只有进过详情拿到缓存才变对。
+/// 现在无缓存时直接走 `playlistSongs(lastOnly: true)` 翻到末页取最后一首，进列表即正确。
+///
+/// 设计要点：
 ///  · 静态缓存 `infoCache`：一个歌单只请求一次，滚动来回不重复发请求；
-///  · 懒加载在 `.task` 里做，请求第一首歌后拿它的 `coverFallbackKeys`（kg:hash / al:专辑id），
-///    交给 CoverImage 联网 resolve 真实专辑图 —— ⚠️ 云歌单第一首的 artworkURL 常为空，
-///    这正是 2026-11-22(四) 只看 artworkURL 没生效的根因。
+///  · 拿到歌曲后取它的 `coverFallbackKeys`（kg:hash / al:专辑id），交给 CoverImage
+///    联网 resolve 真实专辑图 —— ⚠️ 云歌单歌曲的 artworkURL 常为空，只看它不生效；
 ///  · 失败 / 空歌单回退歌单自带封面 + seed 占位。
 private struct PlaylistFirstCover: View {
     let playlist: KugouClient.KugouPlaylist
 
-    /// 第一首歌的封面信息。`keys` 交给 CoverImage resolve，`art` 是同步已登记的直连地址，
+    /// 倒序第一首歌的封面信息。`keys` 交给 CoverImage resolve，`art` 是同步已登记的直连地址，
     /// `songID` 记录是哪首歌（用于判断第一首是否变化，避免误判 art 而反复重解析）。
     private struct CoverInfo {
         var songID: String = ""
@@ -2015,14 +2019,16 @@ private struct PlaylistFirstCover: View {
                     return
                 }
 
-                // 确定第一首：详情缓存优先，否则按需请求服务端第一页。
+                // 确定倒序第一首：详情缓存优先（它已是 reversed 后的列表首行），
+                // 否则翻到服务端末页取最后一首 —— 这样不用先进详情，列表就直接显示正确封面。
                 // ⚠️ try? await 不能放在 ?? 的 autoclosure 里，改显式分支。
                 let first: Song?
                 if let cachedFirst {
                     first = cachedFirst
                 } else {
+                    // 🔴 最后一首可能没有 artworkURL，仍要靠 coverFallbackKeys resolve。
                     first = try? await KugouClient.shared
-                        .playlistSongs(listid: playlist.id, firstPageOnly: true).first
+                        .playlistSongs(listid: playlist.id, lastOnly: true).last
                 }
                 Self.markChecked(playlist.id)
 

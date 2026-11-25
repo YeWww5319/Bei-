@@ -2986,9 +2986,12 @@ final class KugouClient {
     // MARK: - 酷狗歌单详情（拉取歌单内歌曲）
 
     /// 根据 listid 拉取歌单内所有歌曲（分页 + 🔴 gateway.kugou.com 接口必须带 webSign）
-    /// - firstPageOnly: 🔴 2026-11-22(四) 歌单列表缩略图专用 —— 只拉第一页（少量），
-    ///   用来拿「第一首歌的封面」，避免为列表里几十个歌单都拉全量歌曲。
-    func playlistSongs(listid: String, firstPageOnly: Bool = false) async throws -> [Song] {
+    /// - firstPageOnly: 只拉第一页（少量），避免为列表里几十个歌单都拉全量歌曲。
+    /// - lastOnly: 🔴 2026-11-25 歌单列表缩略图专用 —— 详情页整体 `reversed()` 倒序，
+    ///   「列表第一首」其实是服务端**最后一首**。逐页翻到末页，内存只留末页那一批，
+    ///   返回后调用方取 `.first` 即为倒序第一首的封面。
+    func playlistSongs(listid: String, firstPageOnly: Bool = false,
+                       lastOnly: Bool = false) async throws -> [Song] {
         guard KugouAuth.shared.isLoggedIn else { throw KugouError.parse("请先登录酷狗") }
         if KugouAuth.shared.dfid == "-" { await registerDevice() }
         let userId = KugouAuth.shared.userId
@@ -2998,6 +3001,9 @@ final class KugouClient {
         var page = 1
         let pageSize = firstPageOnly ? 10 : 200
         let maxPage = firstPageOnly ? 1 : 50
+        // 🔴 lastOnly：只为拿「倒序第一首」= 服务端最后一首。翻页到底，但每页覆盖前一批，
+        //    内存里始终只留最后一批（≤200 首），不会为几百首歌单囤积全量 JSON。
+        let keepLastPageOnly = lastOnly && !firstPageOnly
         while page <= maxPage {
             let clienttime = "\(Int(Date().timeIntervalSince1970))"
 
@@ -3092,7 +3098,12 @@ final class KugouClient {
                 Log.info("酷狗", "🔴 歌单详情解析为空：listid=\(listid) 顶层 keys=[\(topKeys)] data keys=[\(dataKeys)]")
             }
 
-            allItems.append(contentsOf: items)
+            if keepLastPageOnly {
+                // 空页（总数刚好是 pageSize 整数倍时的最后一页）不能覆盖已有末页数据。
+                if !items.isEmpty { allItems = items }
+            } else {
+                allItems.append(contentsOf: items)
+            }
             if items.count < pageSize { break }
             page += 1
         }

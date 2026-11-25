@@ -123,6 +123,10 @@ final class ImmersiveHeaderState: ObservableObject {
     ///    （用户截图 789d3075「顶栏变色有点慢」）。这里跨 0.5 阈值那一次
     ///    立刻发布，整个收起过程最多 2 次，不会像连续值那样引发列表抖。
     @Published var navIsDark: Bool = true
+    /// 🔴 2026-11-25：大图顶部是否浅色（白色封面）。展开态白字会糊在白图上，
+    ///    检测到浅图时顶栏文字 / 状态栏图标一起转黑；只在图片就绪时写一次，
+    ///    不参与滚动路径，不会引发列表抖。
+    @Published var heroIsLight: Bool = false
     private var navAppearanceWork: DispatchWorkItem?
 
     /// 🔴 2026-11-12 第三轮：字母索引的展开态单独成一个只发 Bool 的对象。
@@ -156,15 +160,35 @@ final class ImmersiveHeaderState: ObservableObject {
     /// 吸顶头相对 ZStack 顶部的偏移：静止时贴大图底边，收起后钉在导航栏下沿。
     func stickyY(for s: CGFloat) -> CGFloat { max(0, maxDrag - s) }
 
-    /// 顶栏文字/图标色：展开纯白（深色大图）、收起纯黑（浅色毛玻璃）。
+    /// 顶栏文字/图标色：展开态看大图明暗（深色白字 / 浅色黑字）、收起态看毛玻璃（浅底黑字）。
     /// 🔴 第二十二轮：改用即时 `navIsDark` 二值，与状态栏白/黑字同一时刻切换，
     ///    不再等 0.12s 去抖。`navFrostOpacity` 仍只管标题渐显这类连续动效。
     /// 🔴 2026-11-17：深色主题下毛玻璃底也是深色，收起后不能把文字切成黑色
-    ///    （用户反馈「上滑后顶栏字体颜色看不清」）。展开态保持白字。
-    var navContentColor: Color { navIsDark || AppStyle.isDarkTheme ? .white : .black }
+    ///    （用户反馈「上滑后顶栏字体颜色看不清」）。
+    /// 🔴 2026-11-25：展开态新增 `heroIsLight` —— 白色大图上白字看不见，改黑字；
+    ///    深色主题的大图仍保持白字（主题本身要求浅色内容）。
+    var navContentColor: Color {
+        if AppStyle.isDarkTheme { return .white }
+        return navIsDark ? (heroIsLight ? .black : .white) : .black
+    }
 
-    /// 状态栏 / UIKit 锚点用的同一判据：展开态或深色主题都必须用白色内容。
-    var navUsesDarkChrome: Bool { navIsDark || AppStyle.isDarkTheme }
+    /// 状态栏 / UIKit 锚点用的同一判据：与 `navContentColor` 完全同步。
+    var navUsesDarkChrome: Bool {
+        if AppStyle.isDarkTheme { return true }
+        return navIsDark && !heroIsLight
+    }
+
+    /// 大图就绪后回主线程写亮度；和滚动路径隔离，一次图片只写一次。
+    func setHeroLight(_ light: Bool) {
+        if Thread.isMainThread {
+            if heroIsLight != light { heroIsLight = light }
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.heroIsLight != light else { return }
+                self.heroIsLight = light
+            }
+        }
+    }
 
     /// 列表顶部占位：列表静止时屏幕 y = 大图底边 + 吸顶头高。
     var listPlaceholder: CGFloat {
@@ -415,6 +439,8 @@ struct ImmersiveCoverHero: View {
     var subtitle: String? = nil
     var detail: String? = nil
     let headerHeight: CGFloat
+    /// 🔴 2026-11-25：大图顶部亮度回报（浅色 → 顶栏/状态栏切黑字）。
+    var onHeroLight: ((Bool) -> Void)? = nil
 
     var body: some View {
         let screenW = UIScreen.main.bounds.width
@@ -435,7 +461,9 @@ struct ImmersiveCoverHero: View {
                 fallbackColor: ImmersiveStyle.heroFallback,
                 // 🔴 2026-11-14：头图绝不复用列表页缓存的 150px 小图，
                 //    否则 480px 歌单封面会被放大成糊图（用户真机截图）。
-                hiRes: true
+                hiRes: true,
+                // 🔴 2026-11-25：浅色大图自动切黑字顶栏（含缓存首帧）。
+                onImageReady: { img in onHeroLight?(HeroBrightness.topIsLight(img)) }
             )
             .frame(width: screenW, height: headerHeight)
             .clipped()

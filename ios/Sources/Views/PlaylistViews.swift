@@ -146,7 +146,8 @@ struct PlaylistDetailView: View {
                     title: playlist.name,
                     subtitle: playlist.creatorName.isEmpty ? nil : playlist.creatorName,
                     detail: displaySongs.isEmpty ? nil : "\(displaySongs.count) 首",
-                    headerHeight: headerState.headerHeight
+                    headerHeight: headerState.headerHeight,
+                    onHeroLight: { headerState.setHeroLight($0) }
                 )
             },
             sticky: { actionBar },
@@ -555,7 +556,8 @@ struct AlbumDetailView: View {
                     title: album.name,
                     subtitle: album.artist,
                     detail: songs.isEmpty ? nil : "\(songs.count) 首",
-                    headerHeight: headerState.headerHeight
+                    headerHeight: headerState.headerHeight,
+                    onHeroLight: { headerState.setHeroLight($0) }
                 )
             },
             sticky: { actionBar },
