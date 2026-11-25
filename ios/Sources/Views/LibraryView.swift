@@ -1591,6 +1591,12 @@ struct KugouPlaylistDetail: View {
     private func removeSong(_ song: Song) async {
         do {
             try await KugouClient.shared.removeSongFromPlaylist(listid, song: song)
+            // 🔴 2026-11-25(四)：从「默认收藏」移出等同于取消收藏 —— 本地收藏表同步移除，
+            //    否则下面的「本地收藏补齐」会把刚移出的歌又塞回列表。
+            if name == "默认收藏",
+               let favorite = LibraryStore.shared.fullFavoriteMatch(for: song) {
+                LibraryStore.shared.toggleFavorite(favorite)
+            }
             withAnimation(.easeOut(duration: 0.2)) {
                 songs.removeAll { $0.id == song.id }
                 listVersion += 1
@@ -1692,13 +1698,46 @@ struct KugouPlaylistDetail: View {
         return out
     }
 
+    /// 🔴 2026-11-25(四)：收藏的歌「有时不显示在默认收藏」的最后一道保险。
+    ///
+    /// 云端 `add_song` 是 fire-and-forget，且本页缓存 TTL 5 分钟 —— 用户在播放页
+    /// 点红心时本页已销毁，收不到 `auroraFavoriteDidAdd`；再进页面时如果缓存还新鲜，
+    /// 直接拿旧列表返回，云端即使已经加进去也看不到。这里以**本地收藏表**（收藏时
+    /// 立刻落盘，且必然带完整歌名）为权威，把云端列表里还没有的收藏插到最前面。
+    /// 取消过的歌由 `excludedFavoriteIDs` 挡住，不会被"复活"。
+    private static func mergingLocalFavorites(_ input: [Song], name: String) -> [Song] {
+        guard name == "默认收藏" else { return input }
+        let lib = LibraryStore.shared
+        var seenIDs: Set<String> = []
+        var seenPairs: Set<String> = []
+        for song in input {
+            seenIDs.insert(song.id)
+            if !song.cleanTitle.isEmpty { seenPairs.insert("\(song.cleanTitle)|\(song.artist)") }
+        }
+        var added: [Song] = []
+        // favorites 本身是「最新收藏在最前」，顺序天然就是列表要的倒序。
+        for favorite in lib.favorites where !lib.isExcludedFavorite(favorite) {
+            let full = lib.canonicalSong(for: favorite)
+            let title = full.cleanTitle.trimmingCharacters(in: .whitespaces)
+            let pair = "\(title)|\(full.artist)"
+            if !title.isEmpty, seenPairs.contains(pair) { continue }
+            guard seenIDs.insert(full.id).inserted else { continue }
+            if !title.isEmpty { seenPairs.insert(pair) }
+            added.append(full)
+        }
+        guard !added.isEmpty else { return input }
+        return added + input
+    }
+
     /// 🔴 2026-11-24(六)闪退根因修复：本函数所有 `songs`/`isLoading`/`errorMsg` 都是 @State，
     ///    旧代码是非隔离 async —— `.task { await load() }` 里 await 续跑落到协作线程池（后台），
     ///    后台写 @State → SwiftUI 后台改 AutoLayout → NSInternalInconsistencyException 崩溃。
     ///    崩溃日志正是「574 首歌单封面补齐后 + 海量封面下载」时崩。标 @MainActor 收敛到主线程；
     ///    网络请求/反查/enrich 仍由 KugouClient 在后台完成，await 期间不阻塞主线程。
     @MainActor private func load() async {
-        let cached = Self.mergingPinnedFavorite(withoutExcludedFavorites(Self.detailCache[listid] ?? []), listid: listid)
+        let cached = Self.mergingLocalFavorites(
+            Self.mergingPinnedFavorite(withoutExcludedFavorites(Self.detailCache[listid] ?? []), listid: listid),
+            name: name)
         if !cached.isEmpty {
             songs = cached
             listVersion += 1
@@ -1724,7 +1763,9 @@ struct KugouPlaylistDetail: View {
             // 🔴 v2.8.2：二次进入/刷新时保留已补齐的歌手/封面，不把之前的反查成果打回占位
             let merged = mergePreservingEnriched(reversed)
             // 🔴 v2.9.5：刚存进来的歌排到第一位（其余保持上面的倒序）
-            let ordered = Self.mergingPinnedFavorite(KugouRecentAdditions.shared.ordered(merged, forListID: listid), listid: listid)
+            let ordered = Self.mergingLocalFavorites(
+                Self.mergingPinnedFavorite(KugouRecentAdditions.shared.ordered(merged, forListID: listid), listid: listid),
+                name: name)
             songs = ordered
             listVersion += 1
             Self.detailCache[listid] = ordered
@@ -1748,16 +1789,20 @@ struct KugouPlaylistDetail: View {
                 let final = await KugouClient.shared.enrichPlaylistSongs(merged) { snapshot in
                     // 先过门闩：没到时间就整批跳过，不做任何排序/写缓存（这是卡顿的关键）。
                     guard throttle.shouldFlush(interval: 1.2) else { return }
-                    let snapped = Self.mergingPinnedFavorite(
-                        withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(snapshot, forListID: listid)),
-                        listid: listid)
+                    let snapped = Self.mergingLocalFavorites(
+                        Self.mergingPinnedFavorite(
+                            withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(snapshot, forListID: listid)),
+                            listid: listid),
+                        name: name)
                     Self.detailCache[listid] = snapped
                     songs = snapped
                     listVersion += 1
                 }
-                let finalOrdered = Self.mergingPinnedFavorite(
-                    withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(final, forListID: listid)),
-                    listid: listid)
+                let finalOrdered = Self.mergingLocalFavorites(
+                    Self.mergingPinnedFavorite(
+                        withoutExcludedFavorites(KugouRecentAdditions.shared.ordered(final, forListID: listid)),
+                        listid: listid),
+                    name: name)
                 Self.detailCache[listid] = finalOrdered
                 Self.cacheTime[listid] = Date()
                 // 补齐后的实例（歌手/封面/歌名最全）再沉淀一次，主线程写档案避免并发。
