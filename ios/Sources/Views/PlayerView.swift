@@ -2456,8 +2456,24 @@ private struct ClassicProgressBlock: View {
     let dominantColor: Color
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
+    /// 高潮区间缓存（同 PlayerProgressSection：只在歌/歌词/时长变化时重算）
+    @State private var climax: ClimaxInfo?
+    @State private var climaxKey: String = ""
 
     private var displayTime: Double { isScrubbing ? scrubValue : playback.currentTime }
+
+    private var currentClimaxKey: String {
+        "\(store.current?.id ?? "-")|\(store.lyrics.count)|\(Int(playback.duration))"
+    }
+
+    private func refreshClimax() {
+        guard currentClimaxKey != climaxKey else { return }
+        climaxKey = currentClimaxKey
+        climax = ClimaxEstimator.estimate(title: store.current?.cleanTitle ?? "",
+                                          artist: store.current?.artist ?? "",
+                                          lyrics: store.lyrics,
+                                          duration: playback.duration)
+    }
 
     var body: some View {
         // 🔴 v2.5.40 参考图版式：「已播时间 —— 细白进度条 —— 总时长」同一行，
@@ -2482,6 +2498,13 @@ private struct ClassicProgressBlock: View {
                     Capsule()
                         .fill(.white)
                         .frame(width: thumbX, height: trackH)
+                    // 高潮段（金色，只画段不加 chip，与主进度条保持一致的提示）
+                    if let c = climax, playback.duration > 0 {
+                        Capsule()
+                            .fill(Color.orange.opacity(0.85))
+                            .frame(width: max((c.end - c.start) / playback.duration * gWidth, 2), height: 3)
+                            .offset(x: c.start / playback.duration * gWidth)
+                    }
                     // 滑标（拖动时放大）
                     Circle()
                         .fill(.white)
@@ -2529,6 +2552,8 @@ private struct ClassicProgressBlock: View {
         }
         .frame(height: 28)
         .animation(.spring(response: 0.24, dampingFraction: 0.82), value: isScrubbing)
+        .onAppear { refreshClimax() }
+        .onChange(of: currentClimaxKey) { _ in refreshClimax() }
     }
 }
 
@@ -2549,8 +2574,24 @@ private struct ImmersiveCoverProgressBlock: View {
     @State private var scrubValue: Double = 0
     /// 播放点呼吸发光的开关（值本身不变，动画由 SwiftUI repeatForever 驱动）。
     @State private var breathing = false
+    /// 高潮区间缓存（同 PlayerProgressSection：只在歌/歌词/时长变化时重算）
+    @State private var climax: ClimaxInfo?
+    @State private var climaxKey: String = ""
 
     private var displayTime: Double { isScrubbing ? scrubValue : playback.currentTime }
+
+    private var currentClimaxKey: String {
+        "\(store.current?.id ?? "-")|\(store.lyrics.count)|\(Int(playback.duration))"
+    }
+
+    private func refreshClimax() {
+        guard currentClimaxKey != climaxKey else { return }
+        climaxKey = currentClimaxKey
+        climax = ClimaxEstimator.estimate(title: store.current?.cleanTitle ?? "",
+                                          artist: store.current?.artist ?? "",
+                                          lyrics: store.lyrics,
+                                          duration: playback.duration)
+    }
 
     var body: some View {
         VStack(spacing: 2) {
@@ -2563,6 +2604,12 @@ private struct ImmersiveCoverProgressBlock: View {
                     Capsule().fill(.white.opacity(0.28)).frame(height: 2)
                     Capsule().fill(.white.opacity(0.40)).frame(width: bf * w, height: 2)
                     Capsule().fill(.white.opacity(0.95)).frame(width: px, height: 2)
+                    // 高潮段（金色，只画段不加 chip，与主进度条保持一致的提示）
+                    if let c = climax, playback.duration > 0 {
+                        Capsule().fill(Color.orange.opacity(0.9))
+                            .frame(width: max((c.end - c.start) / playback.duration * w, 2), height: 2)
+                            .offset(x: c.start / playback.duration * w)
+                    }
                     // 🔴 缓冲末端的小圆点已按用户要求移除，只保留播放位置的这一个点。
                     //    点的 x 只跟播放进度走，呼吸动画只改 scale / 光晕，不产生位移。
                     Circle().fill(.white)
@@ -2608,6 +2655,8 @@ private struct ImmersiveCoverProgressBlock: View {
             .foregroundStyle(.white.opacity(0.6))
         }
         .frame(height: 34)
+        .onAppear { refreshClimax() }
+        .onChange(of: currentClimaxKey) { _ in refreshClimax() }
     }
 }
 
@@ -2618,8 +2667,25 @@ private struct PlayerProgressSection: View {
     let dominantColor: Color
     @State private var isScrubbing = false
     @State private var scrubValue: Double = 0
+    /// 高潮区间缓存：估算要扫歌词，不能跟着 playback 的 2Hz 重绘反复算，
+    /// 只在「歌 id / 歌词行数 / 时长」变化时重算（见 refreshClimax）。
+    @State private var climax: ClimaxInfo?
+    @State private var climaxKey: String = ""
 
     private var displayTime: Double { isScrubbing ? scrubValue : playback.currentTime }
+
+    private var currentClimaxKey: String {
+        "\(store.current?.id ?? "-")|\(store.lyrics.count)|\(Int(playback.duration))"
+    }
+
+    private func refreshClimax() {
+        guard currentClimaxKey != climaxKey else { return }
+        climaxKey = currentClimaxKey
+        climax = ClimaxEstimator.estimate(title: store.current?.cleanTitle ?? "",
+                                          artist: store.current?.artist ?? "",
+                                          lyrics: store.lyrics,
+                                          duration: playback.duration)
+    }
 
     var body: some View {
         let progressFrac = max(0, min(1, playback.progress))
@@ -2638,6 +2704,22 @@ private struct PlayerProgressSection: View {
                     Capsule()
                         .fill(.white.opacity(0.3))
                         .frame(width: bufferedFrac * trackWidth, height: 3)
+
+                    // 高潮段（金色）：压在缓冲层之上、已播放渐变之下，不挡外层拖拽手势
+                    if let c = climax, playback.duration > 0 {
+                        let climaxX = c.start / playback.duration * trackWidth
+                        let climaxW = max((c.end - c.start) / playback.duration * trackWidth, 2)
+                        Capsule()
+                            .fill(Color.orange.opacity(0.85))
+                            .frame(width: climaxW, height: 3)
+                            .offset(x: climaxX)
+                        // 高潮起点小圆点：金芯白边，在轨道上一眼能找到
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 5, height: 5)
+                            .overlay { Circle().strokeBorder(.white, lineWidth: 1) }
+                            .offset(x: climaxX - 2.5)
+                    }
 
                     Capsule()
                         .fill(LinearGradient(colors: [
@@ -2683,11 +2765,32 @@ private struct PlayerProgressSection: View {
             HStack {
                 Text(displayTime.clockString)
                 Spacer()
+                // 高潮直达 chip：点一下 seek 到高潮起点；没有高潮时不占位，布局与原来一致
+                if let c = climax {
+                    Button {
+                        store.seek(to: c.start)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "flame.fill")
+                                .foregroundStyle(.orange)
+                            Text("高潮 \(c.start.clockString)")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background { Capsule().fill(.white.opacity(0.12)) }
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
                 Text(playback.duration.clockString)
             }
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.white.opacity(0.7))
         }
+        .onAppear { refreshClimax() }
+        .onChange(of: currentClimaxKey) { _ in refreshClimax() }
     }
 }
 
