@@ -191,7 +191,12 @@ private struct Biquad {
 /// 再按原格式量化写回；整型 / 浮点、交错 / 非交错一律正确处理。
 private final class SoundEffectProcessor {
     private let bands: [Float]
+    /// 总增益的线性值（由 init 的 dB 换算，processSample 末尾乘）。
     private let master: Float
+    /// 预增益补偿（线性）：按峰值增益预先衰减，给滤波器链留余量，见 init。
+    private let preGain: Float
+    /// 平直判定：频段全 0 且总增益 0 时整段直通，不让 tanh 给平直信号染色。
+    private let isFlat: Bool
     private var sampleRate: Float = 44100
     /// 每声道一组 10 段滤波器。
     private var filters: [[Biquad]] = []
@@ -200,9 +205,18 @@ private final class SoundEffectProcessor {
     private var fmtIsSigned = true
     private var fmtBitDepth = 32
 
-    init(bands: [Float], master: Float) {
+    init(bands: [Float], master masterDb: Float) {
         self.bands = bands
-        self.master = powf(10, master / 20)
+        self.master = powf(10, masterDb / 20)
+        // 🔴 增益余量（headroom）：预设频段最高能到 +12dB、总增益还能再叠，
+        // 不预先衰减的话峰值直接顶爆，后面削波救不回来（破音/电流声的根源）。
+        // peakBoost 按「频段最大正增益 + 总增益 dB」估峰值（masterDb 用 dB 原值算，
+        // 别和上面已换算成线性的 master 搞混），preGain 在进滤波器链之前先乘，
+        // 滤波器仍按原增益工作，最后的峰值就不会过 0dB。
+        // 代价是整体音量略降，这是开 EQ 的正常代价，靠播放器音量补即可。
+        let peakBoost = max(0, max(0, bands.max() ?? 0) + masterDb)
+        self.preGain = powf(10, -peakBoost / 20)
+        self.isFlat = bands.allSatisfy { $0 == 0 } && masterDb == 0
     }
 
     private static func makeFilters(bands: [Float], sampleRate: Float) -> [Biquad] {
@@ -223,13 +237,18 @@ private final class SoundEffectProcessor {
     // MARK: - 10 段 EQ（Float 域）
 
     private func processSample(_ s: inout Float, channel c: Int) {
+        // 平直（频段全 0、总增益 0）整段直通：滤波器增益为 0 本就不改变信号，
+        // 但末尾的 tanh 无条件饱和会给平直信号染色失真，所以直接原样返回。
+        if isFlat { return }
         guard filters.indices.contains(c) else { s = 0; return }
-        var out = s
+        // 先乘预增益留余量，再过按原增益工作的滤波器链，最后乘总增益。
+        var out = s * preGain
         for i in filters[c].indices { out = filters[c][i].process(out) }
         out *= master
-        // 软裁剪，防止多段增益叠加爆音
-        if out > 1 { out = 1 } else if out < -1 { out = -1 }
-        out = Float(tanh(Double(out)))
+        // 只保留 tanh 一道软削波（输出天然落在 (-1, 1)）：
+        // 以前 tanh 前面还有一道硬削波到 ±1，先把波形削平再饱和，必然破音，已删。
+        // 入参先乘 0.9 留一点头，饱和更柔和。
+        out = Float(tanh(Double(out * 0.9)))
         s = out
     }
 

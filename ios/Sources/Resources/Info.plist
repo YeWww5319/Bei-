@@ -31,6 +31,9 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>需要访问局域网内的自建音源服务以获取歌曲地址、封面与歌词。</string>
+	<!-- 灵动岛 / 锁屏歌词（Live Activity）：没有这个开关系统直接拒绝启动活动 -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

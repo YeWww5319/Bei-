@@ -12,7 +12,7 @@ import MediaPlayer
 
 enum PlayerMoreAction: String, CaseIterable, Identifiable {
     case addToPlaylist, sleepTimer, download, playerStyle
-    case lyricsFontSize, speedPitch, quality, soundEffect
+    case lyricsFontSize, speedPitch, quality, soundEffect, lyricCalibration
 
     var id: String { rawValue }
 
@@ -26,6 +26,7 @@ enum PlayerMoreAction: String, CaseIterable, Identifiable {
         case .speedPitch:     return "调速"
         case .quality:        return "音质选择"
         case .soundEffect:    return "音效"
+        case .lyricCalibration: return "歌词校准"
         }
     }
 
@@ -40,6 +41,7 @@ enum PlayerMoreAction: String, CaseIterable, Identifiable {
         case .speedPitch:     return "slider.horizontal.3"
         case .quality:        return "waveform"
         case .soundEffect:    return "speaker.wave.2"
+        case .lyricCalibration: return "metronome"
         }
     }
 }

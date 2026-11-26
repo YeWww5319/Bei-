@@ -39,6 +39,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+      # 灵动岛歌词的 Activity 属性定义，与 AuroraWidgets 扩展共用同一份。
+      - path: Shared
       # 内置音源脚本。必须写在 sources 里（配 buildPhase: resources）——
       # 之前放在顶层的 resources: 键里，XcodeGen 会静默忽略，
       # 结果 .app 里一个 .js 都没有，内置音源永远装不上。
@@ -51,6 +53,8 @@ targets:
       - sdk: AVFoundation.framework
       - sdk: MediaPlayer.framework
       - package: Supabase
+      # 灵动岛 / 锁屏歌词扩展，随 app 一起打包。
+      - target: AuroraWidgets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.aurora.music
@@ -59,3 +63,21 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_EMIT_LOC_STRINGS: YES
+  # 灵动岛 / 锁屏歌词扩展（Live Activity UI）。ActivityKit 要 iOS 16.1+，
+  # 所以扩展单独定 16.1 部署目标；主 app 仍是 15.0，低版本系统只是没有这个扩展。
+  AuroraWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.1"
+    sources:
+      - path: Widgets
+      - path: Shared
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: ActivityKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aurora.music.widgets
+        INFOPLIST_FILE: Widgets/Info.plist
+        SWIFT_EMIT_LOC_STRINGS: NO

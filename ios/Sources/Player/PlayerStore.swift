@@ -70,7 +70,11 @@ final class PlayerStore: ObservableObject {
     // （播放/暂停/解析完成/切歌/换源都有赋值，漏一处就表现为播放条状态不更新）。
     @Published private(set) var isPlaying = false {
         didSet {
-            if isPlaying != oldValue { mini.isPlaying = isPlaying }
+            if isPlaying != oldValue {
+                mini.isPlaying = isPlaying
+                // 灵动岛歌词的播放/暂停图标跟着切（暂停不结束活动，只换状态）
+                syncLiveActivity()
+            }
             syncQueueSnapshot()
         }
     }
@@ -134,12 +138,63 @@ final class PlayerStore: ObservableObject {
 
     func resetLyricOffset() { lyricOffsetSeconds = 0 }
 
-    /// 🔴 匹配歌词行/驱动卡拉OK填充统一使用的"歌词时间" = 实时播放头 − 用户微调。
+    /// 歌词速度比例：1.0 = 与播放头同速。
+    /// 治的是「越往后差越多」——歌词对应的版本与音频版本长度不同，
+    /// 固定偏移救不了，只能把歌词时间轴按比例拉伸/压缩：
+    /// 歌词越唱越**落后**于声音 → 需要 scale > 1（歌词时间走得更快才能追上）；
+    /// 歌词越唱越**抢先** → scale < 1。范围限制在 0.95~1.05，足够覆盖版本时长差。
+    /// 持久化到 UserDefaults，跨会话保留。
+    var lyricScale: Double {
+        get {
+            let v = UserDefaults.standard.double(forKey: "aurora.lyricScale")
+            return v == 0 ? 1.0 : v   // 没存过时 double 返回 0，语义上是默认 1.0
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "aurora.lyricScale")
+            refreshLyric()
+        }
+    }
+
+    func adjustLyricScale(by delta: Double) {
+        let next = min(1.05, max(0.95, lyricScale + delta))
+        lyricScale = next
+    }
+
+    func resetLyricScale() { lyricScale = 1.0 }
+
+    /// 🔴 统一的歌词时间公式：歌词时间 = 播放头时间 × 速度比例 − 整体偏移。
+    /// 高亮行查找（refreshLyric）与逐字填充（lyricDisplayTime）都必须走这里，
+    /// 两条路径用不同公式就会出现「整行高亮对了、逐字填充慢半拍」的错位。
+    func lyricTime(for rawTime: Double) -> Double {
+        rawTime * lyricScale - lyricOffsetSeconds
+    }
+
+    /// 🔴 匹配歌词行/驱动卡拉OK填充统一使用的"歌词时间"，走 lyricTime 公式。
     /// 延后 0.5s 时，同一句歌词要在播放头多走 0.5s 后才高亮/开始填充。
     var lyricDisplayTime: Double {
         // seek 未落到目标前用目标时间，避免逐字填充被旧播放头拖回去。
         let base = lyricSeekTarget ?? preciseTime
-        return base - lyricOffsetSeconds
+        return lyricTime(for: base)
+    }
+
+    /// 组装当前歌词行状态，同步给灵动岛 / 锁屏 Live Activity。
+    /// 调用点只有两处：歌词换行（refreshLyric）与播放/暂停变化（isPlaying didSet），
+    /// 控制器内部会按状态去重，这里不用自己判断要不要发。
+    private func syncLiveActivity() {
+        let index = lyricState.currentIndex
+        var line = ""
+        var nextLine = ""
+        if let index, lyrics.indices.contains(index) {
+            line = lyrics[index].text
+            if lyrics.indices.contains(index + 1) {
+                nextLine = lyrics[index + 1].text
+            }
+        }
+        LiveActivityController.shared.sync(title: current?.cleanTitle ?? "",
+                                           artist: current?.artist ?? "",
+                                           line: line,
+                                           nextLine: nextLine,
+                                           isPlaying: isPlaying)
     }
 
     /// 迷你播放条专用状态 —— 第二个高频隔离对象。
@@ -646,6 +701,8 @@ final class PlayerStore: ObservableObject {
         artistPhoto = nil
         currentPalette = ArtworkPaletteEngine.palette(for: nil, seed: "-")
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        // 停止播放后灵动岛歌词一并结束，不留残影
+        LiveActivityController.shared.endAll()
     }
 
     // MARK: - 加载与播放
@@ -1240,14 +1297,16 @@ final class PlayerStore: ObservableObject {
     }
 
     /// 直接用传入的时间，不依赖 @Published currentTime —— 时间观察器里用这个保持精准对齐。
-    /// 🔴 v2.5.39：统一减去用户微调 lyricOffsetSeconds，让「高亮行」与「逐字填充」
-    /// 走同一个校准后的时间轴（否则两者会差一个 offset）。
+    /// 🔴 v2.5.39：统一走 lyricTime 公式（速度比例 + 整体偏移），让「高亮行」与
+    /// 「逐字填充」走同一个校准后的时间轴（否则两者会差一个 offset）。
     private func refreshLyric(at time: Double) {
-        let found = LRCParser.index(at: time - lyricOffsetSeconds, in: lyrics)
+        let found = LRCParser.index(at: lyricTime(for: time), in: lyrics)
         if found != lyricState.currentIndex {
             lyricState.currentIndex = found
             // 🔴 v2.5.48：歌词换行时同步刷新锁屏 / CarPlay 标题（标题=当前句）
             updateNowPlayingLyricTitle()
+            // 灵动岛 / 锁屏 Live Activity 跟着换行（控制器内部去重）
+            syncLiveActivity()
         }
     }
 

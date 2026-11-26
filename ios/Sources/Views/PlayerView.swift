@@ -1615,6 +1615,7 @@ struct PlayerView: View {
         case .speedPitch:    moreSheet = .speedPitch
         case .quality:       moreSheet = .quality
         case .soundEffect:   showSoundEffectPanel = true
+        case .lyricCalibration: moreSheet = .lyricCalibration
         }
         showMoreMenu = false
         Haptics.light()
@@ -4095,6 +4096,7 @@ struct KugouLyricsPage: View {
         case .speedPitch:    activeSheet = .speedPitch
         case .quality:       activeSheet = .quality
         case .soundEffect:   showSoundEffectPanel = true
+        case .lyricCalibration: activeSheet = .lyricCalibration
         }
         showMore = false
         Haptics.light()

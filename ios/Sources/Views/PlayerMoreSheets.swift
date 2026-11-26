@@ -10,7 +10,7 @@ import AVFoundation
 // 竖屏播放页与歌词页共用这套页面，行为完全一致。
 
 enum PlayerMoreSheet: String, Identifiable {
-    case addToPlaylist, sleepTimer, playerStyle, lyricsFontSize, speedPitch, quality, share, source
+    case addToPlaylist, sleepTimer, playerStyle, lyricsFontSize, speedPitch, quality, share, source, lyricCalibration
 
     var id: String { rawValue }
 
@@ -24,6 +24,7 @@ enum PlayerMoreSheet: String, Identifiable {
         case .quality:       return "音质选择"
         case .share:         return "分享"
         case .source:        return "音源"
+        case .lyricCalibration: return "歌词校准"
         }
     }
 }
@@ -52,6 +53,9 @@ struct PlayerMoreSheetView: View {
     /// 🔴 歌词字号：直接写 UserDefaults，歌词页的 BigLyricsView 用同一个 key 订阅，
     ///    在设置页里改完返回就能立刻看到效果，不需要手动传值。
     @AppStorage(LyricsFontScale.key) private var lyricsFontScale: Double = 1.0
+    /// 歌词校准页的刷新计数：store 的校准值是 UserDefaults 计算属性、不是
+    /// @Published，改完不会自动重绘本页，靠点按后自增这个值强制刷新当前值显示。
+    @State private var calibrationRevision = 0
 
     var body: some View {
         Group {
@@ -152,6 +156,8 @@ struct PlayerMoreSheetView: View {
             return "变速会同时改变音调，切歌后依然生效；1.0× 为原速"
         case .lyricsFontSize:
             return "调整歌词页当前句与其他行的文字大小，立即生效并记住选择"
+        case .lyricCalibration:
+            return "整首均匀地慢，用「提前 / 延后」；越往后差得越多，用「变快 / 变慢」。改完立即生效"
         case .playerStyle:
             return "切换后竖屏播放页立即换样式，并记住你的选择"
         default:
@@ -208,9 +214,78 @@ struct PlayerMoreSheetView: View {
                 }
             }
 
+        case .lyricCalibration:
+            calibrationRows
+
         default:
             EmptyView()
         }
+    }
+
+    // MARK: - 歌词校准（偏移 + 速度）
+
+    /// 按钮文案按「效果」命名（歌词提前 = 让歌词显示得更早），不让用户自己算符号：
+    /// 歌词慢 = 显示落后，需要提前 → offset 减小（adjustLyricOffset(by: -0.5)）；
+    /// 歌词越往后越落后 → 歌词时间要走得更快 → scale 增大。
+    private var calibrationRows: some View {
+        let offset = store.lyricOffsetSeconds
+        let scale = store.lyricScale
+        _ = calibrationRevision   // 读一次建立依赖，点按自增后本页会重绘
+        return VStack(spacing: 0) {
+            infoRow("当前偏移", offsetText(offset))
+            divider
+            optionRow(title: "歌词提前 0.5 秒", selected: false) {
+                store.adjustLyricOffset(by: -0.5); bumpCalibration()
+            }
+            divider
+            optionRow(title: "歌词延后 0.5 秒", selected: false) {
+                store.adjustLyricOffset(by: 0.5); bumpCalibration()
+            }
+            divider
+            optionRow(title: "重置偏移", selected: offset == 0) {
+                store.resetLyricOffset(); bumpCalibration()
+            }
+            divider
+            infoRow("当前速度", String(format: "%.2f%%", scale * 100))
+            divider
+            optionRow(title: "歌词变快一点（+0.25%）", selected: false) {
+                store.adjustLyricScale(by: 0.0025); bumpCalibration()
+            }
+            divider
+            optionRow(title: "歌词变慢一点（−0.25%）", selected: false) {
+                store.adjustLyricScale(by: -0.0025); bumpCalibration()
+            }
+            divider
+            optionRow(title: "重置速度", selected: scale == 1.0) {
+                store.resetLyricScale(); bumpCalibration()
+            }
+        }
+    }
+
+    private func offsetText(_ offset: Double) -> String {
+        if offset == 0 { return "无偏移" }
+        let seconds = String(format: "%.1f", abs(offset))
+        return offset > 0 ? "歌词延后 \(seconds) 秒" : "歌词提前 \(seconds) 秒"
+    }
+
+    private func bumpCalibration() {
+        Haptics.light()
+        calibrationRevision += 1
+    }
+
+    /// 只读信息行：左标签 + 右当前值（校准页用来显示偏移/速度现状）。
+    private func infoRow(_ title: String, _ value: String) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.system(size: 15))
+                .foregroundStyle(AppStyle.secondaryText)
+            Spacer(minLength: 0)
+            Text(value)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(AppStyle.primaryText)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
     }
 
     /// 字号预览：跟着档位实时变化，不用返回歌词页就知道选多大。
