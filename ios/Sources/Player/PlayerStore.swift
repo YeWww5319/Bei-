@@ -119,13 +119,40 @@ final class PlayerStore: ObservableObject {
 
     // MARK: - 歌词时间校准（v2.5.39）
 
+    /// 🔴 校准值按歌分开存（2026-11-26 用户要求「全部校准好」）：
+    /// 每首歌的偏移/速度差都不一样（取决于音源给的音频版本与歌词版本是否同源），
+    /// 全局一个值不可能首首对齐。改成：当前歌有自己的记录就用自己的，
+    /// 没有就落回全局默认（偏移 0 / 速度 1.0）。用户对一首歌调过一次，
+    /// 这首歌以后每次播都自动对齐，等于逐首攒出一套全部校准好的库。
+    private var lyricCalibrationSongID: String { current?.id ?? "" }
+
+    private func lyricStoredValue(baseKey: String, perSongPrefix: String) -> Double? {
+        let defaults = UserDefaults.standard
+        let id = lyricCalibrationSongID
+        if !id.isEmpty, let v = defaults.object(forKey: perSongPrefix + id) as? Double {
+            return v
+        }
+        return defaults.object(forKey: baseKey) as? Double
+    }
+
+    private func setLyricStoredValue(_ value: Double?, baseKey: String, perSongPrefix: String) {
+        let defaults = UserDefaults.standard
+        let id = lyricCalibrationSongID
+        if !id.isEmpty {
+            if let value { defaults.set(value, forKey: perSongPrefix + id) }
+            else { defaults.removeObject(forKey: perSongPrefix + id) }
+        } else if let value {
+            defaults.set(value, forKey: baseKey)
+        }
+    }
+
     /// 歌词整体微调（秒）：正数 = 歌词**延后**显示，负数 = **提前**。
     /// 不同音源下发的 LRC 时间戳可能整首偏早/偏晚，用户可在播放页「更多」里校准。
-    /// 持久化到 UserDefaults，跨会话保留。
+    /// 按当前歌持久化（见上方说明），跨会话保留。
     var lyricOffsetSeconds: Double {
-        get { UserDefaults.standard.double(forKey: "aurora.lyricOffsetSeconds") }
+        get { lyricStoredValue(baseKey: "aurora.lyricOffsetSeconds", perSongPrefix: "aurora.lyricOffset.") ?? 0 }
         set {
-            UserDefaults.standard.set(newValue, forKey: "aurora.lyricOffsetSeconds")
+            setLyricStoredValue(newValue, baseKey: "aurora.lyricOffsetSeconds", perSongPrefix: "aurora.lyricOffset.")
             refreshLyric()
         }
     }
@@ -136,7 +163,11 @@ final class PlayerStore: ObservableObject {
         lyricOffsetSeconds = next
     }
 
-    func resetLyricOffset() { lyricOffsetSeconds = 0 }
+    func resetLyricOffset() {
+        // 清掉当前歌的记录，落回全局默认 0
+        setLyricStoredValue(nil, baseKey: "aurora.lyricOffsetSeconds", perSongPrefix: "aurora.lyricOffset.")
+        refreshLyric()
+    }
 
     /// 歌词速度比例：1.0 = 与播放头同速。
     /// 治的是「越往后差越多」——歌词对应的版本与音频版本长度不同，
@@ -145,12 +176,9 @@ final class PlayerStore: ObservableObject {
     /// 歌词越唱越**抢先** → scale < 1。范围限制在 0.95~1.05，足够覆盖版本时长差。
     /// 持久化到 UserDefaults，跨会话保留。
     var lyricScale: Double {
-        get {
-            let v = UserDefaults.standard.double(forKey: "aurora.lyricScale")
-            return v == 0 ? 1.0 : v   // 没存过时 double 返回 0，语义上是默认 1.0
-        }
+        get { lyricStoredValue(baseKey: "aurora.lyricScale", perSongPrefix: "aurora.lyricScale.") ?? 1.0 }
         set {
-            UserDefaults.standard.set(newValue, forKey: "aurora.lyricScale")
+            setLyricStoredValue(newValue, baseKey: "aurora.lyricScale", perSongPrefix: "aurora.lyricScale.")
             refreshLyric()
         }
     }
@@ -160,7 +188,11 @@ final class PlayerStore: ObservableObject {
         lyricScale = next
     }
 
-    func resetLyricScale() { lyricScale = 1.0 }
+    func resetLyricScale() {
+        // 清掉当前歌的记录，落回全局默认 1.0
+        setLyricStoredValue(nil, baseKey: "aurora.lyricScale", perSongPrefix: "aurora.lyricScale.")
+        refreshLyric()
+    }
 
     /// 🔴 统一的歌词时间公式：歌词时间 = 播放头时间 × 速度比例 − 整体偏移。
     /// 高亮行查找（refreshLyric）与逐字填充（lyricDisplayTime）都必须走这里，
